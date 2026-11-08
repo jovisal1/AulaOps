@@ -1,0 +1,19 @@
+---
+- name: Comprobar familia Debian y arquitectura
+  ansible.builtin.assert:
+    that:
+    - ansible_facts.os_family == 'Debian'
+    - ansible_facts.architecture in ['x86_64', 'aarch64']
+    fail_msg: Estas recetas requieren LliureX/Debian de 64 bits.
+  tags:
+  - always
+- name: Comprobar permisos sudo
+  ansible.builtin.command:
+    argv:
+    - id
+    - -u
+  register: sudo_check
+  changed_when: false
+  failed_when: sudo_check.stdout != '0'
+  tags:
+  - always

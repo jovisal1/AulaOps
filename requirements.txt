@@ -1,0 +1,4 @@
+ansible-core>=2.18,<2.21
+ansible-runner>=2.4,<3
+PyYAML>=6,<7
+passlib>=1.7.4,<2

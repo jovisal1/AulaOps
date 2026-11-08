@@ -1,0 +1,22 @@
+---
+- name: Instalar Java JDK
+  hosts: aula
+  become: true
+  gather_facts: true
+  serial: 10
+  tags:
+  - java
+  vars_files:
+  - vars/global.yml
+  pre_tasks:
+  - name: Comprobaciones previas
+    ansible.builtin.import_tasks: tasks/preflight.yml
+    tags:
+    - always
+  tasks:
+  - name: Instalar JDK seleccionada
+    ansible.builtin.apt:
+      name: openjdk-{{ aula_jdk }}-jdk
+      state: present
+      update_cache: true
+      cache_valid_time: 3600

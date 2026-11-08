@@ -1,0 +1,29 @@
+---
+- name: Crear usuario del aula
+  hosts: aula
+  become: true
+  gather_facts: true
+  serial: 10
+  tags:
+  - user
+  vars_files:
+  - vars/global.yml
+  pre_tasks:
+  - name: Comprobaciones previas
+    ansible.builtin.import_tasks: tasks/preflight.yml
+    tags:
+    - always
+  tasks:
+  - name: Crear usuario con home y sudo
+    ansible.builtin.user:
+      name: '{{ aula_user }}'
+      password: '{{ aula_password_hash }}'
+      update_password: '{{ ''always'' if aula_reset_password else ''on_create'' }}'
+      groups: sudo
+      append: true
+      create_home: true
+      shell: /bin/bash
+      state: present
+    no_log: true
+  - name: Resolver cuenta del aula
+    ansible.builtin.import_tasks: tasks/account.yml

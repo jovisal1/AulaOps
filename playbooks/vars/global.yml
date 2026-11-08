@@ -1,0 +1,12 @@
+---
+aula_user: alumno
+aula_reset_password: false
+aula_jdk: '21'
+aula_extensions:
+- vscjava.vscode-java-pack
+aula_settings:
+  editor.fontSize: 14
+  editor.formatOnSave: true
+  files.autoSave: afterDelay
+aula_folders: []
+aula_delete_home: false

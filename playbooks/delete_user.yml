@@ -1,0 +1,18 @@
+---
+- name: Eliminar usuario del aula
+  hosts: aula
+  become: true
+  gather_facts: true
+  serial: 10
+  tags:
+  - delete_user
+  vars_files:
+  - vars/global.yml
+  pre_tasks:
+  - name: Comprobaciones previas
+    ansible.builtin.import_tasks: tasks/preflight.yml
+    tags:
+    - always
+  tasks:
+  - name: Eliminar cuenta local indicada
+    ansible.builtin.import_tasks: tasks/delete_user.yml

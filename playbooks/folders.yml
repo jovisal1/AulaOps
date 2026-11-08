@@ -1,0 +1,87 @@
+---
+- name: Copiar carpetas al escritorio
+  hosts: aula
+  become: true
+  gather_facts: true
+  serial: 10
+  tags:
+  - folders
+  vars_files:
+  - vars/global.yml
+  pre_tasks:
+  - name: Comprobaciones previas
+    ansible.builtin.import_tasks: tasks/preflight.yml
+    tags:
+    - always
+  tasks:
+  - name: Resolver cuenta del aula
+    ansible.builtin.import_tasks: tasks/account.yml
+  - name: Copiar carpetas al escritorio del usuario
+    block:
+    - name: Instalar utilidad de carpetas de escritorio
+      ansible.builtin.apt:
+        name:
+        - xdg-user-dirs
+        - acl
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Comprobar si el usuario ya tiene escritorio configurado
+      ansible.builtin.stat:
+        path: '{{ aula_home }}/.config/user-dirs.dirs'
+      register: xdg_config
+    - name: Consultar escritorio localizado del usuario
+      become_user: '{{ aula_user }}'
+      ansible.builtin.command:
+        argv:
+        - xdg-user-dir
+        - DESKTOP
+      environment:
+        HOME: '{{ aula_home }}'
+      register: desktop_query
+      changed_when: false
+      when: xdg_config.stat.exists
+    - name: Elegir escritorio existente o Escritorio para una cuenta nueva
+      ansible.builtin.set_fact:
+        aula_desktop: '{{ desktop_query.stdout if xdg_config.stat.exists else aula_home
+          + ''/Escritorio'' }}'
+    - name: Validar que el escritorio esté dentro del home
+      ansible.builtin.assert:
+        that:
+        - aula_desktop.startswith(aula_home + '/')
+        - '''..'' not in aula_desktop.split(''/'')'
+        fail_msg: Escritorio deshabilitado o fuera del home; revisa user-dirs.dirs.
+    - name: Crear escritorio
+      ansible.builtin.file:
+        path: '{{ aula_desktop }}'
+        state: directory
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: '0755'
+    - name: Crear configuración XDG para una cuenta nueva
+      ansible.builtin.file:
+        path: '{{ aula_home }}/.config'
+        state: directory
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: '0755'
+      when: not xdg_config.stat.exists
+    - name: Registrar escritorio para una cuenta nueva
+      ansible.builtin.copy:
+        content: XDG_DESKTOP_DIR="$HOME/Escritorio"
+        dest: '{{ aula_home }}/.config/user-dirs.dirs'
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: '0644'
+        force: false
+      when: not xdg_config.stat.exists
+    - name: Copiar cada carpeta conservando su nombre
+      ansible.builtin.copy:
+        src: '{{ item }}'
+        dest: '{{ aula_desktop }}/'
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: preserve
+        directory_mode: '0755'
+        backup: true
+      loop: '{{ aula_folders }}'

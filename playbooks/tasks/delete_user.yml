@@ -1,0 +1,43 @@
+---
+- name: Proteger usuario SSH y cuentas reservadas
+  ansible.builtin.assert:
+    that:
+    - aula_delete_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+    - aula_delete_user not in ['root', 'nobody', ansible_user]
+    fail_msg: No se permite eliminar el usuario de conexión ni cuentas reservadas.
+- name: Buscar la cuenta exclusivamente en los usuarios locales
+  ansible.builtin.command:
+    argv:
+    - getent
+    - -s
+    - files
+    - passwd
+    - '{{ aula_delete_user }}'
+  register: local_delete_account
+  changed_when: false
+  failed_when: local_delete_account.rc not in [0, 2]
+- name: Validar y eliminar la cuenta local existente
+  when: local_delete_account.rc == 0
+  block:
+  - name: Proteger cuentas del sistema y validar el home antes de borrarlo
+    ansible.builtin.assert:
+      that:
+      - local_delete_account.stdout.split(':')[0] == aula_delete_user
+      - local_delete_account.stdout.split(':')[2] | int >= 1000
+      - local_delete_account.stdout.split(':')[2] | int < 65534
+      - not (aula_delete_home | bool) or local_delete_account.stdout.split(':')[5].startswith('/home/')
+      - not (aula_delete_home | bool) or local_delete_account.stdout.split(':')[5]
+        == '/home/' + aula_delete_user
+      - not (aula_delete_home | bool) or '..' not in local_delete_account.stdout.split(':')[5].split('/')
+      fail_msg: Cuenta del sistema o home fuera de /home; no se ha eliminado.
+  - name: Eliminar usuario sin forzar el cierre de sesiones
+    ansible.builtin.user:
+      name: '{{ aula_delete_user }}'
+      state: absent
+      remove: '{{ aula_delete_home | bool }}'
+      force: false
+- name: Informar si el usuario ya estaba ausente
+  ansible.builtin.debug:
+    msg: La cuenta local {{ aula_delete_user }} no existe en este equipo. No se ha
+      modificado nada.
+  when: local_delete_account.rc == 2

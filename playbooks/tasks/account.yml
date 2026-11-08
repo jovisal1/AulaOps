@@ -1,0 +1,16 @@
+---
+- name: Obtener la cuenta de destino
+  ansible.builtin.getent:
+    database: passwd
+    key: '{{ aula_user }}'
+- name: Resolver home y grupo primario de destino
+  ansible.builtin.set_fact:
+    aula_home: '{{ ansible_facts.getent_passwd[aula_user][4] }}'
+    aula_gid: '{{ ansible_facts.getent_passwd[aula_user][2] }}'
+- name: Comprobar home seguro
+  ansible.builtin.assert:
+    that:
+    - aula_user != 'root'
+    - aula_home.startswith('/home/')
+    - aula_home != '/home/'
+    fail_msg: Se requiere una cuenta local con home bajo /home.

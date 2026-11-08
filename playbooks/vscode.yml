@@ -1,0 +1,104 @@
+---
+- name: Configurar VS Code
+  hosts: aula
+  become: true
+  gather_facts: true
+  serial: 10
+  tags:
+  - vscode
+  vars_files:
+  - vars/global.yml
+  pre_tasks:
+  - name: Comprobaciones previas
+    ansible.builtin.import_tasks: tasks/preflight.yml
+    tags:
+    - always
+  tasks:
+  - name: Resolver cuenta del aula
+    ansible.builtin.import_tasks: tasks/account.yml
+  - name: Preparar repositorio de VS Code
+    block:
+    - name: Instalar dependencias de HTTPS
+      ansible.builtin.apt:
+        name:
+        - ca-certificates
+        - python3-apt
+        - acl
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Crear directorio de claves de APT
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+    - name: Descargar clave pública de Microsoft mediante HTTPS
+      ansible.builtin.get_url:
+        url: https://packages.microsoft.com/keys/microsoft.asc
+        dest: /etc/apt/keyrings/aula-microsoft.asc
+        mode: '0644'
+    - name: Registrar repositorio oficial de VS Code
+      ansible.builtin.apt_repository:
+        repo: deb [arch={{ 'amd64' if ansible_facts.architecture == 'x86_64' else
+          'arm64' }} signed-by=/etc/apt/keyrings/aula-microsoft.asc] https://packages.microsoft.com/repos/code
+          stable main
+        filename: aula-vscode
+        state: present
+    - name: Instalar VS Code
+      ansible.builtin.apt:
+        name: code
+        state: present
+        update_cache: true
+    - name: Crear directorios de configuración del usuario
+      ansible.builtin.file:
+        path: '{{ aula_home }}/{{ item }}'
+        state: directory
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: '0755'
+      loop:
+      - .config
+      - .config/Code
+      - .config/Code/User
+      - .vscode
+      - .vscode/extensions
+    - name: Aplicar settings.json con copia de la versión anterior
+      ansible.builtin.copy:
+        content: '{{ aula_settings | to_nice_json }}'
+        dest: '{{ aula_home }}/.config/Code/User/settings.json'
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: '0600'
+        backup: true
+      no_log: true
+    - name: Consultar extensiones instaladas
+      become_user: '{{ aula_user }}'
+      ansible.builtin.command:
+        argv:
+        - code
+        - --user-data-dir
+        - '{{ aula_home }}/.config/Code'
+        - --extensions-dir
+        - '{{ aula_home }}/.vscode/extensions'
+        - --list-extensions
+      environment:
+        HOME: '{{ aula_home }}'
+      register: installed_extensions
+      changed_when: false
+    - name: Instalar extensiones que faltan para el usuario
+      become_user: '{{ aula_user }}'
+      ansible.builtin.command:
+        argv:
+        - code
+        - --user-data-dir
+        - '{{ aula_home }}/.config/Code'
+        - --extensions-dir
+        - '{{ aula_home }}/.vscode/extensions'
+        - --install-extension
+        - '{{ item }}'
+      environment:
+        HOME: '{{ aula_home }}'
+      loop: '{{ aula_extensions }}'
+      when: item | lower not in (installed_extensions.stdout_lines | map('lower')
+        | list)
+      changed_when: true

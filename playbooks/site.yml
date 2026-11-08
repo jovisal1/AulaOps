@@ -1,0 +1,10 @@
+---
+- ansible.builtin.import_playbook: check.yml
+- ansible.builtin.import_playbook: user.yml
+- ansible.builtin.import_playbook: java.yml
+- ansible.builtin.import_playbook: vscode.yml
+- ansible.builtin.import_playbook: folders.yml
+- ansible.builtin.import_playbook: delete_user.yml
+  tags:
+  - never
+  - delete_user
