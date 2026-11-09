@@ -70,6 +70,27 @@ export default function useRecipes({ busy, setBusy, notify }) {
     setRecipeFilename,
     recipeName,
     saveRecipe,
-    hasCustom: recipes.some((id) => id.startsWith("custom_")),
+    hasCustom: recipes.some(
+      (id) =>
+        id.startsWith("custom_") &&
+        !custom.find((recipe) => recipe.id === id)?.bundled,
+    ),
+    requiresTargetUser: recipes.some(
+      (id) =>
+        ["user", "vscode", "folders"].includes(id) ||
+        (id.startsWith("custom_") &&
+          (!custom.find((recipe) => recipe.id === id)?.bundled ||
+            custom.find((recipe) => recipe.id === id)?.requires_account)),
+    ),
+    accountRecipes: [
+      "vscode",
+      "folders",
+      ...custom
+        .filter((recipe) => recipe.requires_account)
+        .map((recipe) => recipe.id),
+    ],
+    shutdownRecipes: custom
+      .filter((recipe) => recipe.shutdown)
+      .map((recipe) => recipe.id),
   };
 }

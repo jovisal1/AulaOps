@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import {
   Accordion,
@@ -68,11 +69,41 @@ export default function JobLogs({ groups, status }) {
                       ? t("Esperando", "Esperant")
                       : t("Sin resultados", "Sense resultats")}
               </Badge>
-              <span className="text-xs font-normal text-muted-foreground">
-                {group.events.length} {t("tareas", "tasques")}
+              <span
+                data-testid={"task-count-" + group.ip}
+                className="text-xs font-normal text-muted-foreground"
+              >
+                {group.progress.completed} /{" "}
+                {group.progress.total === null
+                  ? "…"
+                  : (group.progress.estimated ? "≈" : "") +
+                    group.progress.total}{" "}
+                {t("tareas", "tasques")}
+                {group.progress.skipped > 0 &&
+                  ` · ${group.progress.skipped} ${group.progress.skipped === 1 ? t("omitida", "omesa") : t("omitidas", "omeses")}`}
               </span>
             </div>
           </AccordionTrigger>
+          <div className="space-y-2 pb-3">
+            <Progress
+              aria-label={
+                t("Avance de tareas", "Avanç de tasques") + " " + group.ip
+              }
+              value={
+                group.progress.total
+                  ? Math.min(
+                      100,
+                      (group.progress.completed / group.progress.total) * 100,
+                    )
+                  : 0
+              }
+            />
+            {status === "running" && group.progress.current_task && (
+              <p className="break-words text-xs text-muted-foreground">
+                {t("En curso", "En curs")}: {group.progress.current_task}
+              </p>
+            )}
+          </div>
           <AccordionContent className="space-y-4">
             {group.events.map((event, index) => (
               <div key={index} className="space-y-2 border-t pt-4">

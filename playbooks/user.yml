@@ -14,16 +14,35 @@
     tags:
     - always
   tasks:
-  - name: Crear usuario con home y sudo
+  - name: Crear usuario con home y permisos elegidos
     ansible.builtin.user:
       name: '{{ aula_user }}'
       password: '{{ aula_password_hash }}'
       update_password: '{{ ''always'' if aula_reset_password else ''on_create'' }}'
-      groups: sudo
+      groups: '{{ ''sudo'' if aula_user_sudo | default(true) else omit }}'
       append: true
       create_home: true
       shell: /bin/bash
       state: present
     no_log: true
+  - name: Consultar grupos actuales de la cuenta
+    ansible.builtin.command:
+      argv:
+      - id
+      - -nG
+      - '{{ aula_user }}'
+    register: aula_account_groups
+    changed_when: false
+    when: not (aula_user_sudo | default(true) | bool)
+  - name: Retirar permiso sudo cuando se ha desmarcado
+    ansible.builtin.command:
+      argv:
+      - gpasswd
+      - -d
+      - '{{ aula_user }}'
+      - sudo
+    when:
+    - not (aula_user_sudo | default(true) | bool)
+    - "'sudo' in aula_account_groups.stdout.split()"
   - name: Resolver cuenta del aula
     ansible.builtin.import_tasks: tasks/account.yml

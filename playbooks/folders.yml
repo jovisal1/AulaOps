@@ -16,6 +16,12 @@
   tasks:
   - name: Resolver cuenta del aula
     ansible.builtin.import_tasks: tasks/account.yml
+  - name: Comprobar que hay contenido para copiar antes de limpiar
+    ansible.builtin.assert:
+      that:
+      - aula_files | default([]) | length > 0 or aula_folders | default([]) | length
+        > 0
+      fail_msg: Selecciona archivos o carpetas de origen. No se ha limpiado el escritorio.
   - name: Copiar carpetas al escritorio del usuario
     block:
     - name: Instalar utilidad de carpetas de escritorio
@@ -51,6 +57,8 @@
         - aula_desktop.startswith(aula_home + '/')
         - '''..'' not in aula_desktop.split(''/'')'
         fail_msg: Escritorio deshabilitado o fuera del home; revisa user-dirs.dirs.
+    - name: Validar ruta real antes de preparar el escritorio
+      ansible.builtin.import_tasks: tasks/validate_desktop_path.yml
     - name: Crear escritorio
       ansible.builtin.file:
         path: '{{ aula_desktop }}'
@@ -75,6 +83,8 @@
         mode: '0644'
         force: false
       when: not xdg_config.stat.exists
+    - name: Limpiar carpetas del escritorio antes de copiar material nuevo
+      ansible.builtin.import_tasks: tasks/clear_desktop_folders.yml
     - name: Copiar cada carpeta conservando su nombre
       ansible.builtin.copy:
         src: '{{ item }}'
@@ -85,3 +95,20 @@
         directory_mode: '0755'
         backup: true
       loop: '{{ aula_folders }}'
+    - name: Crear carpeta elegida para los archivos seleccionados
+      ansible.builtin.file:
+        path: '{{ aula_desktop }}/{{ aula_destination_folder }}'
+        state: directory
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: '0755'
+      when: aula_files | default([]) | length > 0
+    - name: Copiar archivos seleccionados a la carpeta del escritorio
+      ansible.builtin.copy:
+        src: '{{ item }}'
+        dest: '{{ aula_desktop }}/{{ aula_destination_folder }}/'
+        owner: '{{ aula_user }}'
+        group: '{{ aula_gid }}'
+        mode: '0644'
+        backup: true
+      loop: '{{ aula_files | default([]) }}'

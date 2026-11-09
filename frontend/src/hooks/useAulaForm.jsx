@@ -33,6 +33,7 @@ export default function useAulaForm(onChange) {
       settings: JSON.stringify(values.aula_settings, null, 2),
       folders: values.aula_folders.join("\n"),
       reset_password: values.aula_reset_password,
+      user_sudo: values.aula_user_sudo ?? true,
       delete_home: values.aula_delete_home,
     };
     setForm((current) => ({

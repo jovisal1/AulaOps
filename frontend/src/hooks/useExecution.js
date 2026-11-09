@@ -43,7 +43,7 @@ export default function useExecution({
       controller.abort();
     };
   }, [jobId]);
-  async function execute() {
+  async function execute(credentials) {
     if (runLock.current || active || !pending) return;
     runLock.current = true;
     await task("run", async () => {
@@ -56,6 +56,10 @@ export default function useExecution({
         );
       const data = await api("run", {
         ...pending,
+        ssh_user: credentials.ssh_user,
+        ssh_password: credentials.ssh_password,
+        sudo_password: credentials.ssh_password,
+        private_key: "",
         delete_confirmation: confirmation,
       });
       setJob(null);
@@ -67,6 +71,7 @@ export default function useExecution({
       setErrorsOnly(false);
       setForm((current) => ({
         ...current,
+        ssh_user: credentials.ssh_user,
         ssh_password: "",
         sudo_password: "",
         target_password: "",
@@ -93,6 +98,13 @@ export default function useExecution({
     return {
       ip,
       events,
+      progress: job?.progress?.[ip] || {
+        completed: events.length,
+        total: null,
+        estimated: true,
+        skipped: events.filter((event) => event.state === "skipped").length,
+        current_task: "",
+      },
       failed: events.some((e) => ["failed", "unreachable"].includes(e.state)),
     };
   });

@@ -1,0 +1,18 @@
+---
+- name: Crear directorio de claves de APT
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+- name: Descargar clave pública de Microsoft mediante HTTPS
+  ansible.builtin.get_url:
+    url: https://packages.microsoft.com/keys/microsoft.asc
+    dest: /etc/apt/keyrings/aula-microsoft.asc
+    mode: '0644'
+- name: Unificar repositorio VS Code y respaldar entradas anteriores
+  ansible.builtin.script:
+    cmd: "{{ playbook_dir }}/files/normalize_vscode_sources.py --architecture {{ 'amd64' if ansible_facts.architecture == 'x86_64' else 'arm64' }} {{ '--check' if ansible_check_mode else '' }}"
+    executable: '{{ ansible_facts.python.executable }}'
+  check_mode: false
+  register: aula_vscode_repository
+  changed_when: (aula_vscode_repository.stdout | trim | from_json).changed

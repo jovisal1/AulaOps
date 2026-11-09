@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Control local de aulas. Escucha exclusivamente en loopback."""
+import base64
+import binascii
 import concurrent.futures
 import datetime
 import ipaddress
@@ -16,6 +18,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import yaml
+from task_progress import HostProgress, estimate_tasks
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / 'data'
@@ -30,7 +33,7 @@ RECIPES = {'check', 'user', 'java', 'vscode', 'folders', 'delete_user'}
 GLOBAL_FIELDS = {'aula_user': 'target_user', 'aula_jdk': 'jdk',
                  'aula_extensions': 'extensions', 'aula_settings': 'settings',
                  'aula_folders': 'folders', 'aula_reset_password': 'reset_password',
-                 'aula_delete_home': 'delete_home'}
+                 'aula_delete_home': 'delete_home', 'aula_user_sudo': 'user_sudo'}
 
 
 def validate_globals(values):
@@ -48,11 +51,15 @@ def validate_globals(values):
         raise ValueError('Usa valores YAML simples: textos, números, booleanos, listas y mapas.') from None
     if len(encoded.encode()) > 65536:
         raise ValueError('Las variables globales superan 64 KiB.')
-    if 'aula_user' in values and (not isinstance(values['aula_user'], str) or not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', values['aula_user']) or values['aula_user'] == 'root'):
-        raise ValueError('Usuario del aula inválido.')
+    values = dict(values)
+    if isinstance(values.get('aula_user'), str):
+        values['aula_user'] = values['aula_user'].strip()
+    if 'aula_user' in values and (not isinstance(values['aula_user'], str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,31}', values['aula_user']) or values['aula_user'] == 'root'):
+        raise ValueError('Usuario del aula inválido en variables globales (aula_user): '
+                         + repr(values['aula_user']) + '. Usa entre 1 y 32 caracteres: letras mayúsculas o minúsculas, números, _ o -; empieza por letra o _. No se permite root.')
     if 'aula_jdk' in values and (not re.fullmatch(r'[0-9]{1,2}', str(values['aula_jdk'])) or not 8 <= int(values['aula_jdk']) <= 99):
         raise ValueError('Versión OpenJDK inválida.')
-    for key in ('aula_reset_password', 'aula_delete_home'):
+    for key in ('aula_reset_password', 'aula_delete_home', 'aula_user_sudo'):
         if key in values and not isinstance(values[key], bool):
             raise ValueError(key + ' debe ser booleano.')
     if 'aula_settings' in values and not isinstance(values['aula_settings'], dict):
@@ -116,6 +123,12 @@ def custom_recipes():
                 for p in sorted(recipe_directory().glob('custom_*.json'))]
 
 
+def available_recipes():
+    bundled = [json.loads(path.read_text(encoding='utf-8'))
+               for path in sorted((ROOT / 'recipes').glob('custom_*.json'))]
+    return bundled + custom_recipes()
+
+
 def recipe_play(recipe):
     return {'name': recipe['name'], 'hosts': 'aula', 'become': True,
             'gather_facts': True, 'serial': 10, 'tags': [recipe['id']],
@@ -157,7 +170,7 @@ def add_recipe(body):
         if checked.returncode:
             raise ValueError('Ansible no acepta esta receta: ' + checked.stderr[-1800:])
     with LOCK:
-        if any(r['name'].casefold() == name.casefold() for r in custom_recipes()):
+        if any(r['name'].casefold() == name.casefold() for r in available_recipes()):
             raise ValueError('Ya existe una receta con ese nombre. Usa otro nombre para la nueva versión.')
         path = recipe_directory() / (recipe['id'] + '.json')
         path.write_text(json.dumps(recipe, ensure_ascii=False), encoding='utf-8')
@@ -269,22 +282,66 @@ def port_value(value):
     return port
 
 
+def validate_selected_files(body):
+    files = body.get('files', [])
+    if not isinstance(files, list) or len(files) > 50:
+        raise ValueError('Selecciona como máximo 50 archivos.')
+    destination = body.get('destination_folder', '')
+    if isinstance(destination, str):
+        destination = destination.strip()
+    if not isinstance(destination, str) or (destination and (destination in {'.', '..'} or len(destination) > 128 or any(c in destination for c in '/\\') or any(ord(c) < 32 for c in destination))):
+        raise ValueError('Indica un nombre de carpeta sin barras ni caracteres de control.')
+    if files and not destination.strip():
+        raise ValueError('Introduce el nombre de la carpeta de destino en el escritorio.')
+    decoded, names, total = [], set(), 0
+    for item in files:
+        if not isinstance(item, dict):
+            raise ValueError('Archivo seleccionado inválido.')
+        name, content = item.get('name'), item.get('content')
+        if not isinstance(name, str) or not name or name in {'.', '..'} or len(name.encode()) > 255 or any(c in name for c in '/\\') or any(ord(c) < 32 for c in name) or name in names:
+            raise ValueError('Nombre de archivo inválido o repetido.')
+        if not isinstance(content, str) or len(content) > 28 * 1024 * 1024:
+            raise ValueError('Contenido de archivo inválido o demasiado grande.')
+        try:
+            data = base64.b64decode(content, validate=True)
+        except (ValueError, binascii.Error):
+            raise ValueError('Contenido de archivo inválido.') from None
+        total += len(data)
+        if total > 20 * 1024 * 1024:
+            raise ValueError('Los archivos seleccionados superan 20 MiB en total.')
+        names.add(name)
+        decoded.append((name, data))
+    return decoded
+
+
 def validate_run(body):
     hosts = valid_hosts(body.get('hosts'))
     recipes = body.get('recipes', [])
-    if not isinstance(recipes, list) or not recipes or any(not isinstance(r, str) or r not in RECIPES | {c['id'] for c in custom_recipes()} for r in recipes):
+    if not isinstance(recipes, list) or not recipes or any(not isinstance(r, str) or r not in RECIPES | {c['id'] for c in available_recipes()} for r in recipes):
         raise ValueError('Elige al menos una receta válida.')
+    bundled_metadata = {recipe['id']: recipe for recipe in available_recipes()}
+    account_recipes = ['vscode', 'folders'] + [key for key, recipe in bundled_metadata.items() if recipe.get('requires_account')]
+    recipes = list(dict.fromkeys(recipes))
+    if 'check' in recipes:
+        recipes = ['check'] + [recipe for recipe in recipes if recipe != 'check']
+    if 'user' in recipes and any(recipe in recipes and recipes.index(recipe) < recipes.index('user') for recipe in account_recipes):
+        raise ValueError('Coloca Crear usuario del aula antes de VS Code y de la copia al escritorio.')
+    if any(bundled_metadata.get(recipe, {}).get('shutdown') and index != len(recipes) - 1 for index, recipe in enumerate(recipes)):
+        raise ValueError('Coloca Apagar PCs del aula al final del orden de ejecución.')
     for field in ('ssh_user', 'target_user'):
         value = body.get(field, '')
-        if (field == 'ssh_user' or any(r in recipes for r in ('user', 'vscode', 'folders'))) and not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', value):
+        pattern = r'[\w][\w.@\\-]{0,254}' if field == 'ssh_user' else r'[A-Za-z_][A-Za-z0-9_-]{0,31}'
+        if (field == 'ssh_user' or any(r in recipes for r in ['user'] + account_recipes)) and (not isinstance(value, str) or not re.fullmatch(pattern, value)):
             raise ValueError('Usuario inválido: ' + field)
     if body.get('target_user') == 'root':
         raise ValueError('El usuario de aula no puede ser root.')
+    if not isinstance(body.get('user_sudo', True), bool):
+        raise ValueError('La opción sudo del usuario debe ser booleana.')
     if 'user' in recipes and not body.get('target_password'):
         raise ValueError('Introduce la contraseña del usuario que vas a crear.')
     if 'delete_user' in recipes:
         username = body.get('delete_username', '')
-        if not isinstance(username, str) or not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', username):
+        if not isinstance(username, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,31}', username):
             raise ValueError('Indica un nombre de usuario válido para eliminar.')
         if username in {'root', 'nobody', body.get('ssh_user')}:
             raise ValueError('No se puede eliminar root, nobody ni el usuario de conexión SSH.')
@@ -306,7 +363,8 @@ def validate_run(body):
     folders = body.get('folders', [])
     if not isinstance(folders, list) or len(folders) > 30:
         raise ValueError('Lista de carpetas inválida.')
-    if 'folders' in recipes and not folders:
+    selected_files = validate_selected_files(body)
+    if 'folders' in recipes and not folders and not selected_files:
         raise ValueError('Introduce al menos una carpeta de origen.')
     resolved = []
     for folder in folders:
@@ -359,15 +417,15 @@ def start_run(body):
     hosts, recipes, jdk, extensions, settings, folders, key = validate_run(body)
     port = port_value(body.get('port', 22))
     # Instantánea: las recetas seleccionadas quedan fijadas al iniciar el trabajo.
-    custom = {r['id']: r for r in custom_recipes()}
-    chosen_custom = [custom[r] for r in dict.fromkeys(recipes) if r in custom]
+    custom = {r['id']: r for r in available_recipes()}
     import ansible_runner
     from passlib.hash import sha512_crypt
     # Hash local: la contraseña de la nueva cuenta no se entrega en claro a Ansible.
     password_hash = sha512_crypt.hash(body['target_password']) if 'user' in recipes else ''
     body.pop('target_password', None)
     job_id = secrets.token_hex(8)
-    job = {'recipes': [custom[r]['name'] if r in custom else r for r in recipes], 'id': job_id, 'status': 'running', 'events': [], 'stats': {}, 'cancel': False, 'hosts': hosts}
+    progress = HostProgress(hosts)
+    job = {'recipes': [custom[r]['name'] if r in custom else r for r in recipes], 'id': job_id, 'status': 'running', 'events': [], 'stats': {}, 'cancel': False, 'hosts': hosts, 'progress': progress.public}
     with LOCK:
         if any(j['status'] == 'running' for j in JOBS.values()):
             raise ValueError('Ya hay una ejecución activa. Espera o cancélala.')
@@ -381,25 +439,44 @@ def start_run(body):
                 os.chmod(temp, 0o700)
                 project = Path(temp) / 'project'
                 shutil.copytree(ROOT / 'playbooks', project)
+                shutil.copyfile(ROOT / 'ansible.cfg', project / 'ansible.cfg')
                 # El archivo coordinador temporal importa solo los playbooks seleccionados.
-                order = ['check', 'user', 'java', 'vscode', 'folders', 'delete_user']
-                selected = [name for name in order if name in recipes or name == 'check']
-                plays = [{'ansible.builtin.import_playbook': name + '.yml'} for name in selected]
-                for recipe in chosen_custom:
-                    if not re.fullmatch(r'custom_[a-f0-9]{16}', recipe['id']):
-                        raise ValueError('Identificador de receta no válido.')
-                    filename = recipe['id'] + '.yml'
-                    (project / filename).write_text(yaml.safe_dump([recipe_play(recipe)], sort_keys=False), encoding='utf-8')
+                selected = ['check'] + [name for name in recipes if name != 'check']
+                plays = []
+                for name in selected:
+                    filename = name + '.yml'
+                    if name in custom:
+                        recipe = custom[name]
+                        if not re.fullmatch(r'custom_[a-f0-9]{16}', name):
+                            raise ValueError('Identificador de receta no válido.')
+                        (project / filename).write_text(yaml.safe_dump([recipe_play(recipe)], sort_keys=False), encoding='utf-8')
                     plays.append({'ansible.builtin.import_playbook': filename})
                 (project / 'site.yml').write_text(yaml.safe_dump(plays, sort_keys=False), encoding='utf-8')
                 (project / 'vars/global.yml').write_text(yaml.safe_dump(globals_snapshot, sort_keys=False), encoding='utf-8')
+                try:
+                    total_tasks = estimate_tasks(project, selected, ['always'] + recipes)
+                except (OSError, ValueError, TypeError, yaml.YAMLError, RecursionError):
+                    total_tasks = None
+                with LOCK:
+                    progress.set_estimate(total_tasks)
+                uploaded_paths = []
+                upload_dir = Path(temp) / 'selected-files'
+                upload_dir.mkdir(mode=0o700)
+                for filename, content in validate_selected_files(body):
+                    target = upload_dir / filename
+                    target.write_bytes(content)
+                    uploaded_paths.append(str(target))
                 extra = {**globals_snapshot,
                     'ansible_user': body['ssh_user'],
-                    'ansible_ssh_common_args': '-o StrictHostKeyChecking=yes -o ConnectTimeout=8',
+                    'aula_prepare_vscode_repository': 'vscode' in recipes,
+                    'ansible_ssh_common_args': '-o StrictHostKeyChecking=no -o ConnectTimeout=8',
                     'aula_user': body.get('target_user', ''), 'aula_password_hash': password_hash,
                     'aula_reset_password': bool(body.get('reset_password', False)),
+                    'aula_user_sudo': body.get('user_sudo', True),
                     'aula_jdk': jdk, 'aula_extensions': extensions, 'aula_settings': settings,
                     'aula_folders': folders,
+                    'aula_files': uploaded_paths,
+                    'aula_destination_folder': body.get('destination_folder', '').strip(),
                     'aula_delete_user': body.get('delete_username', ''),
                     'aula_delete_home': body.get('delete_home', False),
                 }
@@ -414,6 +491,10 @@ def start_run(body):
                     kind = event.get('event', '')
                     data = event.get('event_data', {})
                     with LOCK:
+                        host = data.get('host', '')
+                        mapping = {'pc_' + ip.replace('.', '_'): ip for ip in hosts}
+                        progress.update(mapping.get(host, host), kind, data,
+                                        redact_text(data.get('task', ''), secret_values))
                         if kind == 'playbook_on_stats':
                             job['stats'] = {k: data.get(k, {}) for k in ('ok', 'changed', 'failures', 'dark', 'skipped')}
                         elif kind in ('runner_on_ok', 'runner_on_failed', 'runner_on_unreachable', 'runner_on_skipped', 'runner_on_async_failed'):
@@ -433,12 +514,14 @@ def start_run(body):
                     tags=','.join(dict.fromkeys(['always'] + recipes)),
                     quiet=True, event_handler=event,
                     cancel_callback=lambda: job['cancel'],
-                    envvars={'ANSIBLE_HOST_KEY_CHECKING': 'True', 'ANSIBLE_NOCOLOR': '1',
+                    envvars={'ANSIBLE_CONFIG': str(project / 'ansible.cfg'),
+                             'ANSIBLE_HOST_KEY_CHECKING': 'False', 'ANSIBLE_NOCOLOR': '1',
                              'ANSIBLE_DISPLAY_ARGS_TO_STDOUT': 'False', 'ANSIBLE_LOG_PATH': '/dev/null'},
                     settings={'job_timeout': 3600, 'idle_timeout': 600})
                 with LOCK:
                     job['status'] = 'canceled' if job['cancel'] else ('successful' if result.rc == 0 else 'failed')
                     job['rc'] = result.rc
+                    progress.finish(job['status'] == 'successful')
                     if result.rc and not any(e['state'] in ('failed', 'unreachable') for e in job['events']):
                         try:
                             with result.stdout as output:
@@ -448,6 +531,7 @@ def start_run(body):
         except Exception:
             with LOCK:
                 job['status'] = 'failed'
+                progress.finish(False)
                 job['error'] = 'No se pudo completar la ejecución. Revisa requisitos, acceso SSH/sudo y recetas. No se muestran mensajes que puedan contener credenciales.'
         finally:
             body.clear()
@@ -518,7 +602,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send_json({'error': str(exc)}, 400)
         elif self.path == '/api/recipes':
-            self.send_json({'recipes': [{k: v for k, v in r.items() if k != 'tasks'} for r in custom_recipes()]})
+            self.send_json({'recipes': [{k: v for k, v in r.items() if k != 'tasks'} for r in available_recipes()]})
         elif self.path == '/api/inventory':
             try:
                 with LOCK:
@@ -545,7 +629,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({'error': 'Petición no autorizada. Recarga la página.'}, 403)
         try:
             size = int(self.headers.get('Content-Length', 0))
-            if not 0 < size <= 262144:
+            limit = 29 * 1024 * 1024 if self.path == '/api/run' else 262144
+            if not 0 < size <= limit:
                 raise ValueError('Petición demasiado grande o vacía.')
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):

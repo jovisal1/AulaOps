@@ -1,0 +1,181 @@
+{
+  "id": "custom_4e834b4c60e2972f",
+  "name": "Instalación de MySQL Workbench y Docker",
+  "description": "Workbench y MySQL 8.4 en Docker: localhost:33060, contenedor mysql-db. Contraseña inicial de prácticas: secret; configurable en Variables.",
+  "source": "3_instalacion_workbench_docker.yml",
+  "content": "- name: Detectar base Ubuntu del equipo\n  ansible.builtin.shell: . /etc/os-release; printf \"%s\" \"${UBUNTU_CODENAME:-$VERSION_CODENAME}\"\n  register: aula_ubuntu_base\n  changed_when: false\n- name: Comprobar base Ubuntu compatible\n  ansible.builtin.assert:\n    that:\n    - aula_ubuntu_base.stdout in ['focal', 'jammy', 'noble']\n    fail_msg: Se necesita una base Ubuntu focal, jammy o noble identificable en /etc/os-release.\n- name: Instalar dependencias y Snap\n  ansible.builtin.apt:\n    name:\n    - ca-certificates\n    - curl\n    - gnome-keyring\n    - snapd\n    state: present\n    update_cache: true\n    cache_valid_time: 3600\n- name: Habilitar Snap\n  ansible.builtin.service:\n    name: snapd.socket\n    state: started\n    enabled: true\n- name: Consultar Workbench instalado\n  ansible.builtin.command:\n    argv:\n    - snap\n    - list\n    - mysql-workbench-community\n  register: aula_workbench\n  changed_when: false\n  failed_when: aula_workbench.rc not in [0, 1]\n- name: Instalar MySQL Workbench\n  ansible.builtin.command:\n    argv:\n    - snap\n    - install\n    - mysql-workbench-community\n  when: aula_workbench.rc == 1\n- name: Preparar directorio de claves APT\n  ansible.builtin.file:\n    path: /etc/apt/keyrings\n    state: directory\n    mode: '0755'\n- name: Descargar clave oficial de Docker\n  ansible.builtin.get_url:\n    url: https://download.docker.com/linux/ubuntu/gpg\n    dest: /etc/apt/keyrings/aula-docker.asc\n    mode: '0644'\n- name: Registrar repositorio Docker para la base detectada\n  ansible.builtin.apt_repository:\n    repo: deb [arch={{ 'amd64' if ansible_facts.architecture == 'x86_64' else 'arm64'\n      }} signed-by=/etc/apt/keyrings/aula-docker.asc] https://download.docker.com/linux/ubuntu\n      {{ aula_ubuntu_base.stdout }} stable\n    filename: aula-docker\n    state: present\n- name: Instalar Docker Engine\n  ansible.builtin.apt:\n    name:\n    - docker-ce\n    - docker-ce-cli\n    - containerd.io\n    state: present\n    update_cache: true\n- name: Iniciar Docker\n  ansible.builtin.service:\n    name: docker\n    state: started\n    enabled: true\n- name: Consultar contenedor mysql-db\n  ansible.builtin.command:\n    argv:\n    - docker\n    - container\n    - inspect\n    - mysql-db\n  register: aula_mysql_container\n  changed_when: false\n  failed_when: aula_mysql_container.rc != 0 and 'No such' not in aula_mysql_container.stderr\n  no_log: true\n- name: Crear MySQL de prácticas si no existe\n  ansible.builtin.command:\n    argv:\n    - docker\n    - run\n    - -d\n    - --restart\n    - unless-stopped\n    - -p\n    - 127.0.0.1:33060:3306\n    - --name\n    - mysql-db\n    - -v\n    - aula-mysql-data:/var/lib/mysql\n    - -e\n    - MYSQL_ROOT_PASSWORD={{ aula_mysql_root_password | default('secret') }}\n    - mysql:8.4\n  when: aula_mysql_container.rc != 0\n  no_log: true\n- name: Asegurar contenedor MySQL iniciado\n  ansible.builtin.command:\n    argv:\n    - docker\n    - start\n    - mysql-db\n  changed_when: false\n- name: Conectar permisos de Workbench\n  ansible.builtin.command:\n    argv:\n    - snap\n    - connect\n    - mysql-workbench-community:{{ item }}\n  loop:\n  - password-manager-service\n  - ssh-keys\n  changed_when: false\n",
+  "tasks": [
+    {
+      "name": "Detectar base Ubuntu del equipo",
+      "ansible.builtin.shell": ". /etc/os-release; printf \"%s\" \"${UBUNTU_CODENAME:-$VERSION_CODENAME}\"",
+      "register": "aula_ubuntu_base",
+      "changed_when": false
+    },
+    {
+      "name": "Comprobar base Ubuntu compatible",
+      "ansible.builtin.assert": {
+        "that": [
+          "aula_ubuntu_base.stdout in ['focal', 'jammy', 'noble']"
+        ],
+        "fail_msg": "Se necesita una base Ubuntu focal, jammy o noble identificable en /etc/os-release."
+      }
+    },
+    {
+      "name": "Instalar dependencias y Snap",
+      "ansible.builtin.apt": {
+        "name": [
+          "ca-certificates",
+          "curl",
+          "gnome-keyring",
+          "snapd"
+        ],
+        "state": "present",
+        "update_cache": true,
+        "cache_valid_time": 3600
+      }
+    },
+    {
+      "name": "Habilitar Snap",
+      "ansible.builtin.service": {
+        "name": "snapd.socket",
+        "state": "started",
+        "enabled": true
+      }
+    },
+    {
+      "name": "Consultar Workbench instalado",
+      "ansible.builtin.command": {
+        "argv": [
+          "snap",
+          "list",
+          "mysql-workbench-community"
+        ]
+      },
+      "register": "aula_workbench",
+      "changed_when": false,
+      "failed_when": "aula_workbench.rc not in [0, 1]"
+    },
+    {
+      "name": "Instalar MySQL Workbench",
+      "ansible.builtin.command": {
+        "argv": [
+          "snap",
+          "install",
+          "mysql-workbench-community"
+        ]
+      },
+      "when": "aula_workbench.rc == 1"
+    },
+    {
+      "name": "Preparar directorio de claves APT",
+      "ansible.builtin.file": {
+        "path": "/etc/apt/keyrings",
+        "state": "directory",
+        "mode": "0755"
+      }
+    },
+    {
+      "name": "Descargar clave oficial de Docker",
+      "ansible.builtin.get_url": {
+        "url": "https://download.docker.com/linux/ubuntu/gpg",
+        "dest": "/etc/apt/keyrings/aula-docker.asc",
+        "mode": "0644"
+      }
+    },
+    {
+      "name": "Registrar repositorio Docker para la base detectada",
+      "ansible.builtin.apt_repository": {
+        "repo": "deb [arch={{ 'amd64' if ansible_facts.architecture == 'x86_64' else 'arm64' }} signed-by=/etc/apt/keyrings/aula-docker.asc] https://download.docker.com/linux/ubuntu {{ aula_ubuntu_base.stdout }} stable",
+        "filename": "aula-docker",
+        "state": "present"
+      }
+    },
+    {
+      "name": "Instalar Docker Engine",
+      "ansible.builtin.apt": {
+        "name": [
+          "docker-ce",
+          "docker-ce-cli",
+          "containerd.io"
+        ],
+        "state": "present",
+        "update_cache": true
+      }
+    },
+    {
+      "name": "Iniciar Docker",
+      "ansible.builtin.service": {
+        "name": "docker",
+        "state": "started",
+        "enabled": true
+      }
+    },
+    {
+      "name": "Consultar contenedor mysql-db",
+      "ansible.builtin.command": {
+        "argv": [
+          "docker",
+          "container",
+          "inspect",
+          "mysql-db"
+        ]
+      },
+      "register": "aula_mysql_container",
+      "changed_when": false,
+      "failed_when": "aula_mysql_container.rc != 0 and 'No such' not in aula_mysql_container.stderr",
+      "no_log": true
+    },
+    {
+      "name": "Crear MySQL de prácticas si no existe",
+      "ansible.builtin.command": {
+        "argv": [
+          "docker",
+          "run",
+          "-d",
+          "--restart",
+          "unless-stopped",
+          "-p",
+          "127.0.0.1:33060:3306",
+          "--name",
+          "mysql-db",
+          "-v",
+          "aula-mysql-data:/var/lib/mysql",
+          "-e",
+          "MYSQL_ROOT_PASSWORD={{ aula_mysql_root_password | default('secret') }}",
+          "mysql:8.4"
+        ]
+      },
+      "when": "aula_mysql_container.rc != 0",
+      "no_log": true
+    },
+    {
+      "name": "Asegurar contenedor MySQL iniciado",
+      "ansible.builtin.command": {
+        "argv": [
+          "docker",
+          "start",
+          "mysql-db"
+        ]
+      },
+      "changed_when": false
+    },
+    {
+      "name": "Conectar permisos de Workbench",
+      "ansible.builtin.command": {
+        "argv": [
+          "snap",
+          "connect",
+          "mysql-workbench-community:{{ item }}"
+        ]
+      },
+      "loop": [
+        "password-manager-service",
+        "ssh-keys"
+      ],
+      "changed_when": false
+    }
+  ],
+  "bundled": true,
+  "requires_account": false,
+  "shutdown": false
+}

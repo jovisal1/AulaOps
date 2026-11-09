@@ -1,0 +1,184 @@
+{
+  "id": "custom_c800f0266d2cd50b",
+  "name": "Instalación de XAMPP, PHP y Composer",
+  "description": "Requiere usuario del aula, instalador XAMPP 8.2.12 y crear_db.sql en su escritorio. Ejecuta el SQL en cada lanzamiento.",
+  "source": "5_instalacion_xampp.yml",
+  "content": "- name: Resolver cuenta del aula\n  ansible.builtin.import_tasks: tasks/account.yml\n- name: Comprobar arquitectura XAMPP\n  ansible.builtin.assert:\n    that:\n    - ansible_facts.architecture == 'x86_64'\n    fail_msg: El instalador XAMPP adjunto requiere x86_64.\n- name: Comprobar instalación de XAMPP\n  ansible.builtin.stat:\n    path: /opt/lampp/manager-linux-x64.run\n  register: aula_xampp\n- name: Localizar instalador XAMPP\n  ansible.builtin.stat:\n    path: '{{ aula_xampp_installer | default(aula_home + ''/Escritorio/xampp-linux-x64-8.2.12-0-installer.run'')\n      }}'\n  register: aula_xampp_source\n  when: not aula_xampp.stat.exists\n- name: Comprobar que está preparado el instalador\n  ansible.builtin.assert:\n    that:\n    - aula_xampp_source.stat.exists\n    - aula_xampp_source.stat.isreg\n    fail_msg: Copia primero el instalador XAMPP al escritorio o define aula_xampp_installer\n      con su ruta en el PC de destino.\n  when: not aula_xampp.stat.exists\n- name: Localizar script SQL\n  ansible.builtin.stat:\n    path: '{{ aula_xampp_sql | default(aula_home + ''/Escritorio/crear_db.sql'') }}'\n  register: aula_xampp_sql_file\n- name: Comprobar script SQL de prácticas\n  ansible.builtin.assert:\n    that:\n    - aula_xampp_sql_file.stat.exists\n    - aula_xampp_sql_file.stat.isreg\n    fail_msg: Copia crear_db.sql al escritorio o define aula_xampp_sql con la ruta\n      del SQL en el PC de destino.\n- name: Instalar PHP y dependencias de Composer\n  ansible.builtin.apt:\n    name:\n    - php\n    - php-cli\n    - php-mysql\n    - ca-certificates\n    - wget\n    state: present\n    update_cache: true\n    cache_valid_time: 3600\n- name: Dar permiso de ejecución al instalador\n  ansible.builtin.file:\n    path: '{{ aula_xampp_installer | default(aula_home + ''/Escritorio/xampp-linux-x64-8.2.12-0-installer.run'')\n      }}'\n    mode: '0755'\n  when: not aula_xampp.stat.exists\n- name: Instalar XAMPP como administrador\n  ansible.builtin.command:\n    argv:\n    - '{{ aula_xampp_installer | default(aula_home + ''/Escritorio/xampp-linux-x64-8.2.12-0-installer.run'')\n      }}'\n    - --mode\n    - unattended\n    creates: /opt/lampp/manager-linux-x64.run\n- name: Consultar extensiones PHP de XAMPP\n  ansible.builtin.command:\n    argv:\n    - /opt/lampp/bin/php\n    - -m\n  register: aula_xampp_modules\n  changed_when: false\n- name: Comprobar PDO y extensiones MySQL de XAMPP\n  ansible.builtin.assert:\n    that:\n    - '''PDO'' in aula_xampp_modules.stdout_lines'\n    - '''pdo_mysql'' in aula_xampp_modules.stdout_lines'\n    - '''mysqli'' in aula_xampp_modules.stdout_lines'\n    fail_msg: Esta instalación XAMPP no dispone de PDO, pdo_mysql y mysqli. Revisa\n      su php.ini.\n- name: Crear directorio temporal para Composer\n  ansible.builtin.tempfile:\n    state: directory\n    prefix: aula-composer-\n  register: aula_composer_tmp\n- name: Instalar Composer con firma verificada\n  block:\n  - name: Instalar Composer globalmente\n    shell: \"set -eu\\nEXPECTED_SIGNATURE=$(wget -q -O - https://composer.github.io/installer.sig)\\n\\\n      php -r \\\"copy('https://getcomposer.org/installer', 'composer-setup.php');\\\"\\n\\\n      ACTUAL_SIGNATURE=$(php -r \\\"echo hash_file('sha384', 'composer-setup.php');\\\"\\\n      )\\n\\nif [ \\\"$EXPECTED_SIGNATURE\\\" != \\\"$ACTUAL_SIGNATURE\\\" ]; then\\n    echo\\\n      \\ 'ERROR: Invalid installer signature'\\n    rm composer-setup.php\\n    exit\\\n      \\ 1\\nfi\\n\\nphp composer-setup.php --install-dir=/usr/local/bin --filename=composer\\n\\\n      rm composer-setup.php\\n\"\n    args:\n      creates: /usr/local/bin/composer\n      chdir: '{{ aula_composer_tmp.path }}'\n  always:\n  - name: Eliminar archivos temporales de Composer\n    ansible.builtin.file:\n      path: '{{ aula_composer_tmp.path }}'\n      state: absent\n- name: Iniciar servicios XAMPP\n  ansible.builtin.command:\n    argv:\n    - /opt/lampp/lampp\n    - start\n  changed_when: false\n- name: Leer SQL de prácticas del destino\n  ansible.builtin.slurp:\n    src: '{{ aula_xampp_sql | default(aula_home + ''/Escritorio/crear_db.sql'') }}'\n  register: aula_xampp_sql_content\n  no_log: true\n- name: Ejecutar SQL con MariaDB de XAMPP\n  ansible.builtin.command:\n    argv:\n    - /opt/lampp/bin/mysql\n    - -u\n    - root\n    stdin: '{{ aula_xampp_sql_content.content | b64decode }}'\n  no_log: true\n",
+  "tasks": [
+    {
+      "name": "Resolver cuenta del aula",
+      "ansible.builtin.import_tasks": "tasks/account.yml"
+    },
+    {
+      "name": "Comprobar arquitectura XAMPP",
+      "ansible.builtin.assert": {
+        "that": [
+          "ansible_facts.architecture == 'x86_64'"
+        ],
+        "fail_msg": "El instalador XAMPP adjunto requiere x86_64."
+      }
+    },
+    {
+      "name": "Comprobar instalación de XAMPP",
+      "ansible.builtin.stat": {
+        "path": "/opt/lampp/manager-linux-x64.run"
+      },
+      "register": "aula_xampp"
+    },
+    {
+      "name": "Localizar instalador XAMPP",
+      "ansible.builtin.stat": {
+        "path": "{{ aula_xampp_installer | default(aula_home + '/Escritorio/xampp-linux-x64-8.2.12-0-installer.run') }}"
+      },
+      "register": "aula_xampp_source",
+      "when": "not aula_xampp.stat.exists"
+    },
+    {
+      "name": "Comprobar que está preparado el instalador",
+      "ansible.builtin.assert": {
+        "that": [
+          "aula_xampp_source.stat.exists",
+          "aula_xampp_source.stat.isreg"
+        ],
+        "fail_msg": "Copia primero el instalador XAMPP al escritorio o define aula_xampp_installer con su ruta en el PC de destino."
+      },
+      "when": "not aula_xampp.stat.exists"
+    },
+    {
+      "name": "Localizar script SQL",
+      "ansible.builtin.stat": {
+        "path": "{{ aula_xampp_sql | default(aula_home + '/Escritorio/crear_db.sql') }}"
+      },
+      "register": "aula_xampp_sql_file"
+    },
+    {
+      "name": "Comprobar script SQL de prácticas",
+      "ansible.builtin.assert": {
+        "that": [
+          "aula_xampp_sql_file.stat.exists",
+          "aula_xampp_sql_file.stat.isreg"
+        ],
+        "fail_msg": "Copia crear_db.sql al escritorio o define aula_xampp_sql con la ruta del SQL en el PC de destino."
+      }
+    },
+    {
+      "name": "Instalar PHP y dependencias de Composer",
+      "ansible.builtin.apt": {
+        "name": [
+          "php",
+          "php-cli",
+          "php-mysql",
+          "ca-certificates",
+          "wget"
+        ],
+        "state": "present",
+        "update_cache": true,
+        "cache_valid_time": 3600
+      }
+    },
+    {
+      "name": "Dar permiso de ejecución al instalador",
+      "ansible.builtin.file": {
+        "path": "{{ aula_xampp_installer | default(aula_home + '/Escritorio/xampp-linux-x64-8.2.12-0-installer.run') }}",
+        "mode": "0755"
+      },
+      "when": "not aula_xampp.stat.exists"
+    },
+    {
+      "name": "Instalar XAMPP como administrador",
+      "ansible.builtin.command": {
+        "argv": [
+          "{{ aula_xampp_installer | default(aula_home + '/Escritorio/xampp-linux-x64-8.2.12-0-installer.run') }}",
+          "--mode",
+          "unattended"
+        ],
+        "creates": "/opt/lampp/manager-linux-x64.run"
+      }
+    },
+    {
+      "name": "Consultar extensiones PHP de XAMPP",
+      "ansible.builtin.command": {
+        "argv": [
+          "/opt/lampp/bin/php",
+          "-m"
+        ]
+      },
+      "register": "aula_xampp_modules",
+      "changed_when": false
+    },
+    {
+      "name": "Comprobar PDO y extensiones MySQL de XAMPP",
+      "ansible.builtin.assert": {
+        "that": [
+          "'PDO' in aula_xampp_modules.stdout_lines",
+          "'pdo_mysql' in aula_xampp_modules.stdout_lines",
+          "'mysqli' in aula_xampp_modules.stdout_lines"
+        ],
+        "fail_msg": "Esta instalación XAMPP no dispone de PDO, pdo_mysql y mysqli. Revisa su php.ini."
+      }
+    },
+    {
+      "name": "Crear directorio temporal para Composer",
+      "ansible.builtin.tempfile": {
+        "state": "directory",
+        "prefix": "aula-composer-"
+      },
+      "register": "aula_composer_tmp"
+    },
+    {
+      "name": "Instalar Composer con firma verificada",
+      "block": [
+        {
+          "name": "Instalar Composer globalmente",
+          "shell": "set -eu\nEXPECTED_SIGNATURE=$(wget -q -O - https://composer.github.io/installer.sig)\nphp -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\"\nACTUAL_SIGNATURE=$(php -r \"echo hash_file('sha384', 'composer-setup.php');\")\n\nif [ \"$EXPECTED_SIGNATURE\" != \"$ACTUAL_SIGNATURE\" ]; then\n    echo 'ERROR: Invalid installer signature'\n    rm composer-setup.php\n    exit 1\nfi\n\nphp composer-setup.php --install-dir=/usr/local/bin --filename=composer\nrm composer-setup.php\n",
+          "args": {
+            "creates": "/usr/local/bin/composer",
+            "chdir": "{{ aula_composer_tmp.path }}"
+          }
+        }
+      ],
+      "always": [
+        {
+          "name": "Eliminar archivos temporales de Composer",
+          "ansible.builtin.file": {
+            "path": "{{ aula_composer_tmp.path }}",
+            "state": "absent"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Iniciar servicios XAMPP",
+      "ansible.builtin.command": {
+        "argv": [
+          "/opt/lampp/lampp",
+          "start"
+        ]
+      },
+      "changed_when": false
+    },
+    {
+      "name": "Leer SQL de prácticas del destino",
+      "ansible.builtin.slurp": {
+        "src": "{{ aula_xampp_sql | default(aula_home + '/Escritorio/crear_db.sql') }}"
+      },
+      "register": "aula_xampp_sql_content",
+      "no_log": true
+    },
+    {
+      "name": "Ejecutar SQL con MariaDB de XAMPP",
+      "ansible.builtin.command": {
+        "argv": [
+          "/opt/lampp/bin/mysql",
+          "-u",
+          "root"
+        ],
+        "stdin": "{{ aula_xampp_sql_content.content | b64decode }}"
+      },
+      "no_log": true
+    }
+  ],
+  "bundled": true,
+  "requires_account": true,
+  "shutdown": false
+}

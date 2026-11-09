@@ -1,4 +1,10 @@
 ---
+- name: Recopilar datos del sistema para las comprobaciones previas
+  ansible.builtin.setup:
+    gather_subset:
+    - min
+  tags:
+  - always
 - name: Comprobar familia Debian y arquitectura
   ansible.builtin.assert:
     that:
@@ -15,5 +21,10 @@
   register: sudo_check
   changed_when: false
   failed_when: sudo_check.stdout != '0'
+  tags:
+  - always
+- name: Reparar repositorio VS Code antes de cualquier operación APT
+  ansible.builtin.import_tasks: vscode_repository.yml
+  when: aula_prepare_vscode_repository | default(false) | bool or 'vscode' in ansible_run_tags
   tags:
   - always

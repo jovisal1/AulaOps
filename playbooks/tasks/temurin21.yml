@@ -1,0 +1,110 @@
+---
+- name: Consultar JDK 21 oficial desde el equipo de control
+  ansible.builtin.uri:
+    url: "https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture={{ 'x64' if ansible_facts.architecture == 'x86_64' else 'aarch64' }}&image_type=jdk&os=linux&vendor=eclipse&heap_size=normal"
+    return_content: true
+    timeout: 60
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+  register: temurin_release
+
+- name: Validar metadatos de la descarga
+  ansible.builtin.assert:
+    that:
+    - temurin_release.json | length > 0
+    - temurin_release.json[0].version.major == 21
+    - temurin_release.json[0].binary.package.checksum is match('^[a-fA-F0-9]{64}$')
+    - temurin_release.json[0].binary.package.link.startswith('https://github.com/adoptium/temurin21-binaries/releases/download/')
+    fail_msg: No se ha encontrado una descarga oficial válida de Temurin JDK 21.
+
+- name: Resolver archivo e instalación de Temurin
+  ansible.builtin.set_fact:
+    temurin_archive: '{{ playbook_dir }}/.downloads/temurin-{{ temurin_release.json[0].binary.package.checksum }}.tar.gz'
+    temurin_home: '/opt/aulaops/temurin-21-{{ temurin_release.json[0].binary.package.checksum[:16] }}'
+
+- name: Crear caché temporal de descargas en el equipo de control
+  ansible.builtin.file:
+    path: '{{ playbook_dir }}/.downloads'
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Descargar Temurin en el equipo de control y verificar SHA-256
+  ansible.builtin.get_url:
+    url: '{{ temurin_release.json[0].binary.package.link }}'
+    dest: '{{ temurin_archive }}'
+    checksum: 'sha256:{{ temurin_release.json[0].binary.package.checksum }}'
+    mode: '0600'
+    timeout: 300
+  delegate_to: localhost
+  become: false
+  throttle: 1
+  vars:
+    ansible_python_interpreter: '{{ ansible_playbook_python }}'
+
+- name: Crear directorio de JDK en el PC del aula
+  ansible.builtin.file:
+    path: '{{ temurin_home }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Transferir y extraer Temurin JDK 21 en el PC del aula
+  ansible.builtin.unarchive:
+    src: '{{ temurin_archive }}'
+    dest: '{{ temurin_home }}'
+    remote_src: false
+    extra_opts:
+    - --strip-components=1
+    owner: root
+    group: root
+    creates: '{{ temurin_home }}/bin/javac'
+
+- name: Verificar que el JDK instalado funciona
+  ansible.builtin.command:
+    argv:
+    - '{{ temurin_home }}/bin/javac'
+    - -version
+  register: temurin_version
+  changed_when: false
+  failed_when: temurin_version.rc != 0 or not (temurin_version.stdout is match('^javac 21[. ]'))
+
+- name: Crear ruta estable para JAVA_HOME
+  ansible.builtin.file:
+    src: '{{ temurin_home }}'
+    dest: /opt/aulaops/jdk-21
+    state: link
+    owner: root
+    group: root
+
+- name: Registrar herramientas del JDK sin forzar alternativas elegidas manualmente
+  ansible.builtin.command:
+    argv:
+    - update-alternatives
+    - --install
+    - '/usr/bin/{{ item }}'
+    - '{{ item }}'
+    - '/opt/aulaops/jdk-21/bin/{{ item }}'
+    - '2100'
+  environment:
+    LC_ALL: C
+  loop:
+  - java
+  - javac
+  - jar
+  - javadoc
+  - javap
+  - jshell
+  - keytool
+  register: temurin_alternative
+  changed_when: temurin_alternative.stdout | length > 0
+
+- name: Mostrar JDK instalado
+  ansible.builtin.debug:
+    msg: 'Instalado {{ temurin_version.stdout }}. JAVA_HOME=/opt/aulaops/jdk-21. Las alternativas configuradas manualmente se conservan. Las actualizaciones de este JDK se aplican al volver a lanzar la receta.'

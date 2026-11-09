@@ -1,0 +1,28 @@
+---
+- name: Resolver ruta real del home antes de limpiar el escritorio
+  ansible.builtin.command:
+    argv:
+    - realpath
+    - -m
+    - --
+    - '{{ aula_home }}'
+  register: aula_real_home
+  changed_when: false
+  check_mode: false
+- name: Resolver ruta real del escritorio antes de borrar carpetas
+  ansible.builtin.command:
+    argv:
+    - realpath
+    - -m
+    - --
+    - '{{ aula_desktop }}'
+  register: aula_real_desktop
+  changed_when: false
+  check_mode: false
+- name: Impedir que la limpieza alcance el home o una ruta externa
+  ansible.builtin.assert:
+    that:
+    - aula_real_desktop.stdout.startswith(aula_real_home.stdout + '/')
+    - aula_real_desktop.stdout != aula_real_home.stdout
+    fail_msg: No se han borrado carpetas. El escritorio debe ser una ruta real dentro
+      del home, distinta del propio home.

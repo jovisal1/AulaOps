@@ -44,8 +44,9 @@ class CustomRecipeTests(unittest.TestCase):
         recipe = self.create()
         def fake_run(**kwargs):
             plays = yaml.safe_load((Path(kwargs['project_dir']) / 'site.yml').read_text())
-            self.assertEqual(len(plays), 2)
+            self.assertEqual(len(plays), 3)
             self.assertEqual(plays[1], {'ansible.builtin.import_playbook': recipe['id'] + '.yml'})
+            self.assertEqual(plays[2], {'ansible.builtin.import_playbook': 'java.yml'})
             custom_play = yaml.safe_load((Path(kwargs['project_dir']) / (recipe['id'] + '.yml')).read_text())[0]
             self.assertEqual(custom_play['hosts'], 'aula')
             self.assertEqual(custom_play['tasks'][0]['name'], 'Mostrar usuario')
@@ -57,7 +58,7 @@ class CustomRecipeTests(unittest.TestCase):
             def __init__(self, target, **kwargs): self.target = target
             def start(self): self.target()
         with patch.object(aula.threading, 'Thread', ImmediateThread), patch.object(ansible_runner, 'run', fake_run):
-            result = aula.start_run({'hosts': ['192.168.1.2'], 'recipes': [recipe['id']],
+            result = aula.start_run({'hosts': ['192.168.1.2'], 'recipes': [recipe['id'], 'java'],
                                      'ssh_user': 'profesor', 'target_user': 'alumno'})
         self.assertEqual(aula.JOBS[result['id']]['status'], 'successful')
-        self.assertEqual(aula.JOBS[result['id']]['recipes'], ['Comprobar variable'])
+        self.assertEqual(aula.JOBS[result['id']]['recipes'], ['Comprobar variable', 'java'])

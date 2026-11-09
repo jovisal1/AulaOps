@@ -23,10 +23,20 @@ class GlobalVariableTests(unittest.TestCase):
         self.assertEqual(aula.global_variables()['aula_user'], 'alumno')
         saved = aula.save_global_variables("aula_user: estudiante\naula_jdk: '25'\ncurso: PMDM\n")
         self.assertEqual(saved['variables']['curso'], 'PMDM')
-        self.assertEqual(saved['variables']['aula_extensions'], ['vscjava.vscode-java-pack'])
+        self.assertEqual(saved['variables']['aula_extensions'], ['vscjava.vscode-java-pack', 'redhat.java', 'sohibe.java-generate-setters-getters', 'esbenp.prettier-vscode'])
         self.assertEqual(aula.global_variables()['aula_jdk'], '25')
         aula.save_global_variables('aula_user: otro\n')
         self.assertEqual(len(list(pathlib.Path(self.temp.name).glob('global_vars_*.yml'))), 1)
+
+    def test_exam_username_and_surrounding_whitespace(self):
+        for username in ['examen', ' examen ', 'examen\n']:
+            self.assertEqual(aula.validate_globals({'aula_user': username})['aula_user'], 'examen')
+        self.assertEqual(aula.validate_globals({'aula_user': 'examenPRG'})['aula_user'], 'examenPRG')
+        with self.assertRaisesRegex(ValueError, r'variables globales \(aula_user\)'):
+            aula.validate_globals({'aula_user': 'nombre inválido'})
+        aula.validate_run({'hosts': ['192.168.1.2'], 'recipes': ['user'],
+                           'ssh_user': 'usuario', 'target_user': 'examenPRG',
+                           'target_password': 'test-only'})
 
     def test_bad_yaml_types_and_runtime_credentials_are_rejected(self):
         for content in ['bad: [', '[]', 'null', 'aula_user: root', 'ansible_user: root',
@@ -63,3 +73,38 @@ class GlobalVariableTests(unittest.TestCase):
             with self.subTest(recipe=recipe):
                 result = subprocess.run([executable, '-i', 'aula,', str(aula.ROOT / 'playbooks' / (recipe + '.yml')), '--syntax-check'], capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_preflight_collects_facts_when_play_tag_is_not_selected(self):
+        executable = str(pathlib.Path(aula.sys.executable).parent / 'ansible-playbook')
+        preflight = yaml.safe_load((aula.ROOT / 'playbooks/tasks/preflight.yml').read_text())
+        play = [{'name': 'Preflight con filtro de recetas', 'hosts': 'all',
+                 'gather_facts': True, 'tags': ['check'],
+                 'tasks': preflight[:2]}]
+        with tempfile.TemporaryDirectory() as directory:
+            play[0]['vars'] = {'ansible_remote_tmp': directory + '/remote',
+                               'ansible_python_interpreter': aula.sys.executable}
+            path = pathlib.Path(directory) / 'preflight.yml'
+            path.write_text(yaml.safe_dump(play))
+            result = subprocess.run([executable, '-i', 'localhost,', '-c', 'local',
+                                     str(path), '--tags', 'always,java'],
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Recopilar datos del sistema', result.stdout)
+
+    def test_missing_target_account_has_actionable_error(self):
+        executable = str(pathlib.Path(aula.sys.executable).parent / 'ansible-playbook')
+        tasks = yaml.safe_load((aula.ROOT / 'playbooks/tasks/account.yml').read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            play = [{'hosts': 'all', 'gather_facts': False,
+                     'vars': {'aula_user': 'aulaops_missing_test_7291',
+                              'ansible_remote_tmp': directory + '/remote',
+                              'ansible_python_interpreter': aula.sys.executable},
+                     'tasks': tasks}]
+            path = pathlib.Path(directory) / 'account.yml'
+            path.write_text(yaml.safe_dump(play))
+            result = subprocess.run([executable, '-i', 'localhost,', '-c', 'local', str(path)],
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('aulaops_missing_test_7291', result.stdout)
+        self.assertIn('Crear usuario del aula', result.stdout)
+        self.assertNotIn('One or more supplied key', result.stdout)

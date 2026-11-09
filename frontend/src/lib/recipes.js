@@ -16,7 +16,7 @@ export const builtins = [
   [
     "user",
     "Crear usuario del aula",
-    "Cuenta local, carpeta personal y pertenencia al grupo sudo.",
+    "Cuenta local y carpeta personal, con permisos sudo opcionales.",
     Users,
   ],
   [
@@ -27,14 +27,14 @@ export const builtins = [
   ],
   [
     "vscode",
-    "Configurar VS Code",
+    "Instalación y configuración de VS Code",
     "Editor, extensiones y settings.json del usuario del aula.",
     Terminal,
   ],
   [
     "folders",
     "Copiar carpetas al escritorio",
-    "Desde el equipo de control, con propietario y permisos del usuario.",
+    "Selecciona archivos y elige su carpeta de destino en el escritorio.",
     Folder,
   ],
   [

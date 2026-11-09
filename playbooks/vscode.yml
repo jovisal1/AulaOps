@@ -1,5 +1,5 @@
 ---
-- name: Configurar VS Code
+- name: Instalación y configuración de VS Code
   hosts: aula
   become: true
   gather_facts: true
@@ -27,28 +27,13 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
-    - name: Crear directorio de claves de APT
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-    - name: Descargar clave pública de Microsoft mediante HTTPS
-      ansible.builtin.get_url:
-        url: https://packages.microsoft.com/keys/microsoft.asc
-        dest: /etc/apt/keyrings/aula-microsoft.asc
-        mode: '0644'
-    - name: Registrar repositorio oficial de VS Code
-      ansible.builtin.apt_repository:
-        repo: deb [arch={{ 'amd64' if ansible_facts.architecture == 'x86_64' else
-          'arm64' }} signed-by=/etc/apt/keyrings/aula-microsoft.asc] https://packages.microsoft.com/repos/code
-          stable main
-        filename: aula-vscode
-        state: present
     - name: Instalar VS Code
       ansible.builtin.apt:
         name: code
         state: present
         update_cache: true
+    - name: Reconciliar entradas creadas por el instalador de VS Code
+      ansible.builtin.import_tasks: tasks/vscode_repository.yml
     - name: Crear directorios de configuración del usuario
       ansible.builtin.file:
         path: '{{ aula_home }}/{{ item }}'
@@ -102,3 +87,5 @@
       when: item | lower not in (installed_extensions.stdout_lines | map('lower')
         | list)
       changed_when: true
+  vars:
+    aula_prepare_vscode_repository: true

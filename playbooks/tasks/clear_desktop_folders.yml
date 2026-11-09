@@ -1,0 +1,18 @@
+---
+- name: Validar ruta real antes de limpiar carpetas
+  ansible.builtin.import_tasks: validate_desktop_path.yml
+- name: Buscar carpetas existentes en el escritorio sin seguir enlaces
+  ansible.builtin.find:
+    paths: '{{ aula_real_desktop.stdout }}'
+    file_type: directory
+    recurse: false
+    hidden: true
+    follow: false
+  register: aula_desktop_existing_folders
+- name: Eliminar carpetas anteriores del escritorio con todo su contenido
+  ansible.builtin.file:
+    path: '{{ item.path }}'
+    state: absent
+  loop: '{{ aula_desktop_existing_folders.files }}'
+  loop_control:
+    label: '{{ item.path }}'

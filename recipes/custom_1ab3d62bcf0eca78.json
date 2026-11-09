@@ -1,0 +1,35 @@
+{
+  "id": "custom_1ab3d62bcf0eca78",
+  "name": "Apagar PCs del aula",
+  "description": "Apaga los equipos seleccionados en un minuto y comprueba el cierre de SSH. Colócala al final del orden de ejecución.",
+  "source": "6_apagar_pcs.yml",
+  "content": "- name: Programar apagado del equipo\n  ansible.builtin.command:\n    argv:\n    - /sbin/shutdown\n    - -h\n    - '+1'\n  changed_when: true\n- name: Esperar al cierre del puerto SSH\n  ansible.builtin.wait_for:\n    host: '{{ ansible_host }}'\n    port: '{{ ansible_port | default(22) }}'\n    state: stopped\n    delay: 10\n    timeout: 180\n  delegate_to: localhost\n  become: false\n",
+  "tasks": [
+    {
+      "name": "Programar apagado del equipo",
+      "ansible.builtin.command": {
+        "argv": [
+          "/sbin/shutdown",
+          "-h",
+          "+1"
+        ]
+      },
+      "changed_when": true
+    },
+    {
+      "name": "Esperar al cierre del puerto SSH",
+      "ansible.builtin.wait_for": {
+        "host": "{{ ansible_host }}",
+        "port": "{{ ansible_port | default(22) }}",
+        "state": "stopped",
+        "delay": 10,
+        "timeout": 180
+      },
+      "delegate_to": "localhost",
+      "become": false
+    }
+  ],
+  "bundled": true,
+  "requires_account": false,
+  "shutdown": true
+}

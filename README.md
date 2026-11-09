@@ -33,17 +33,9 @@ Abre **http://127.0.0.1:8765** en ese mismo equipo. No ejecutes la aplicación c
 
 El equipo de control necesita acceso a PyPI para instalar dependencias. Los PCs necesitan acceso a sus repositorios APT y, para VS Code/extensiones, a Microsoft y Visual Studio Marketplace. Los destinos requieren Python 3 y SSH operativo. No se instala ni configura SSH remotamente.
 
-## Antes de ejecutar: verificar las claves SSH
+## Conexión SSH con contraseña
 
-Desde el mismo usuario que iniciará la aplicación, conecta una vez a cada PC:
-
-```bash
-ssh profesor@192.168.1.10
-# Si usas un puerto distinto:
-ssh -p 2222 profesor@192.168.1.10
-```
-
-Contrasta la huella con la del equipo de destino antes de aceptarla. Así se registra en `~/.ssh/known_hosts`. La aplicación no acepta automáticamente claves nuevas ni desactiva su comprobación. Si el PC ha sido reinstalado, comprueba la nueva huella antes de actualizar la entrada.
+`ansible.cfg` incluye `host_key_checking = false`. AulaOps aplica esa configuración también en el proyecto temporal de cada ejecución y usa `StrictHostKeyChecking=no`. No es necesario conectar manualmente a cada PC para registrar primero su huella. Esta configuración desactiva la verificación de la identidad del servidor mediante la clave SSH.
 
 ## Flujo de trabajo
 
@@ -63,9 +55,9 @@ Las ejecuciones usan la selección visible; no es obligatorio guardar el inventa
 ## Recetas incluidas
 
 - **Usuario:** cuenta local con `/bin/bash`, home y grupo `sudo`. La contraseña se transforma en hash SHA-512 localmente. De forma predeterminada solo se aplica a cuentas nuevas; marca la opción correspondiente para cambiarla en cuentas existentes. No se concede sudo sin contraseña. Usa un nombre local que no colisione con cuentas de dominio.
-- **Java:** instala `openjdk-N-jdk` mediante APT (21 por defecto). Debe existir en los repositorios de tu versión. No elimina otras JDK ni fuerza `update-alternatives` si ya hay varias.
+- **Java:** instala `openjdk-N-jdk` mediante APT (21 por defecto). Si JDK 21 no tiene candidato en APT, descarga Eclipse Temurin JDK 21 oficial desde el equipo de control, verifica SHA-256 y lo transfiere por SSH. El PC del aula no necesita acceso a Adoptium o GitHub. Se instala en `/opt/aulaops/jdk-21` (ruta estable para `JAVA_HOME`) y registra las herramientas con `update-alternatives`, conservando las selecciones manuales. El equipo de control requiere HTTPS a `api.adoptium.net`, `github.com` y sus servidores de descargas. Para actualizar Temurin, vuelve a ejecutar la receta; APT no actualiza esta instalación. Las otras versiones requieren candidato en APT. No elimina otras JDK ni fuerza `update-alternatives` si ya hay varias.
 - **VS Code:** instala el paquete oficial `code` desde el repositorio HTTPS de Microsoft con clave de firma acotada al repositorio. Instala extensiones que falten mediante el CLI como el usuario de aula. No elimina ni actualiza expresamente extensiones existentes. Sustituye `~/.config/Code/User/settings.json`, con copia de seguridad si cambia. El JSON debe ser válido, sin comentarios. Si el aula ya tiene un repositorio de Microsoft con otra configuración `Signed-By`, unifica esa configuración antes de ejecutar esta receta.
-- **Carpetas:** las rutas pertenecen al equipo donde corre `app.py`, no al navegador ni al PC remoto. Copia cada carpeta conservando su nombre al escritorio XDG del usuario; para cuentas nuevas sin configuración crea `~/Escritorio` y registra esa ubicación. Conserva archivos adicionales del destino y respalda archivos modificados. Si el escritorio está deshabilitado o fuera del home, la tarea se detiene para que revises su ubicación. Para volúmenes muy grandes conviene adaptar la receta a rsync.
+- **Carpetas:** las rutas pertenecen al equipo donde corre `app.py`, no al navegador ni al PC remoto. Copia cada carpeta conservando su nombre al escritorio XDG del usuario; para cuentas nuevas sin configuración crea `~/Escritorio` y registra esa ubicación. Antes de copiar elimina todas las carpetas existentes del escritorio, incluidas las ocultas y todo su contenido, y después crea los nuevos directorios. Conserva archivos sueltos y enlaces simbólicos; no sigue sus destinos. La eliminación no tiene deshacer. Si el escritorio está deshabilitado o fuera del home, la tarea se detiene para que revises su ubicación. Para volúmenes muy grandes conviene adaptar la receta a rsync.
 
 El usuario de destino debe existir si ejecutas VS Code o carpetas sin seleccionar también la receta de creación. Se admiten homes locales bajo `/home/`; los usuarios y escritorios centralizados de un modelo de aula LliureX requieren adaptación específica.
 
@@ -123,7 +115,7 @@ ansible-playbook -i data/hosts.yml playbooks/site.yml --syntax-check
 ansible-playbook -i data/hosts.yml playbooks/site.yml -u profesor -k -K --tags check
 ```
 
-Omite `-k` si usas clave y `-K` si sudo no necesita contraseña. Estas órdenes utilizan la comprobación SSH habitual. Si necesitas diagnóstico adicional al mostrado por IP, reproduce primero la prueba de conexión desde terminal. Revisa el playbook antes de ejecutar otras etiquetas manualmente y evita guardar secretos en variables de texto sin cifrar.
+Omite `-k` si usas clave y `-K` si sudo no necesita contraseña. Ejecutadas desde la carpeta del proyecto, estas órdenes usan el `ansible.cfg` incluido, con la comprobación de huellas desactivada. Si necesitas diagnóstico adicional al mostrado por IP, reproduce primero la prueba de conexión desde terminal. Revisa el playbook antes de ejecutar otras etiquetas manualmente y evita guardar secretos en variables de texto sin cifrar.
 
 ## Verificación del proyecto
 
@@ -193,3 +185,16 @@ ansible-playbook -i data/hosts.yml playbooks/java.yml -u profesor -e @data/globa
 ```
 
 La creación de usuario necesita además `aula_password_hash`, que la interfaz calcula de forma temporal a partir de la contraseña. La eliminación directa requiere indicar explícitamente `aula_delete_user`; conserva las comprobaciones del usuario SSH, UID y home. Las credenciales de conexión en la consola se gestionan con el agente SSH o las opciones habituales de Ansible.
+
+
+En la receta de copia al escritorio puedes seleccionar varios archivos con **Archivos para copiar** y escribir la **Carpeta de destino en el escritorio** (por ejemplo, `Tema 1`). Se copian dentro de esa carpeta para el usuario del aula, conservando sus nombres. Puedes añadir o quitar archivos antes de ejecutar; límite: 50 archivos y 20 MiB en total. Los archivos seleccionados se preparan temporalmente y se eliminan del equipo de control al terminar. También se mantienen las rutas locales de carpetas como opción adicional.
+
+Al pulsar **Ejecutar ahora**, un diálogo solicita el usuario y la contraseña SSH. Reutiliza el último nombre de usuario de la sesión y usa la contraseña introducida también para sudo. La contraseña se borra al cerrar el diálogo.
+
+Cuando selecciones varias recetas, usa las flechas de **Orden de ejecución** para subirlas o bajarlas. La revisión muestra el orden elegido y el servidor lo respeta también para recetas personalizadas. La comprobación previa permanece al principio. Si seleccionas crear una cuenta, colócala antes de VS Code y de copiar al escritorio.
+
+En **Crear usuario del aula**, la casilla **Permitir administrar el equipo (sudo)** permite elegir si la cuenta pertenece al grupo `sudo`. Se muestra activada de forma predeterminada para conservar el comportamiento anterior; también puede ajustarse con `aula_user_sudo: false` en Variables. Si se desmarca y la cuenta ya existe, se retira únicamente del grupo `sudo`, sin eliminar sus otros grupos ni modificar reglas independientes de sudoers.
+
+La receta de VS Code reconcilia las entradas de `https://packages.microsoft.com/repos/code stable` antes de utilizar APT. Admite `sources.list`, archivos `.list` y Deb822 `.sources`, conserva otros repositorios y crea copias con el sufijo `.aulaops-backup-FECHA-ID` junto a cada archivo modificado. La entrada canónica es `/etc/apt/sources.list.d/aula-vscode.list`, con `signed-by=/etc/apt/keyrings/aula-microsoft.asc`. Se comprueban de nuevo las entradas tras instalar VS Code para evitar duplicados introducidos por el instalador. Si ejecutas varias recetas junto a VS Code, la reconciliación se realiza desde las comprobaciones previas, antes de cualquier instalación de paquetes.
+
+Durante la ejecución, cada IP muestra **tareas procesadas / total previsto**, una barra de avance y la tarea en curso. El símbolo `≈` indica que el total es estimado a partir de los playbooks e importaciones estáticas: las tareas dinámicas y de recuperación pueden ajustarlo. Las tareas omitidas también cuentan como procesadas y se indican por separado; un bucle cuenta como una tarea. El contador no estima minutos restantes. Al finalizar correctamente, se muestra el total real procesado; una ejecución fallida o cancelada conserva el total previsto para no aparentar que se ejecutó lo pendiente.

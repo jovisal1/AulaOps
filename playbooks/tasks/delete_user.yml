@@ -2,7 +2,7 @@
 - name: Proteger usuario SSH y cuentas reservadas
   ansible.builtin.assert:
     that:
-    - aula_delete_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+    - aula_delete_user is match('^[A-Za-z_][A-Za-z0-9_-]{0,31}$')
     - aula_delete_user not in ['root', 'nobody', ansible_user]
     fail_msg: No se permite eliminar el usuario de conexión ni cuentas reservadas.
 - name: Buscar la cuenta exclusivamente en los usuarios locales

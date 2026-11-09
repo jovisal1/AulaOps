@@ -25,6 +25,36 @@ class ValidationTests(unittest.TestCase):
             with self.assertRaises((ValueError, TypeError)):
                 aula.validate_run(base | update)
 
+    def test_ssh_user_accepts_existing_account_formats(self):
+        base = {'hosts': ['192.168.1.2'], 'recipes': ['check']}
+        for username in ['usuario', 'Usuario', 'nombre.apellido', 'usuario@centro.local', r'CENTRO\usuario', '123usuario']:
+            with self.subTest(username=username):
+                aula.validate_run(base | {'ssh_user': username})
+        for username in ['', '-usuario', 'user name', 'user\n', 'user;id', '$(id)']:
+            with self.subTest(username=username), self.assertRaises(ValueError):
+                aula.validate_run(base | {'ssh_user': username})
+
+    def test_delete_user_accepts_mixed_case_account(self):
+        aula.validate_run({'hosts': ['192.168.1.2'], 'recipes': ['delete_user'],
+                           'ssh_user': 'usuario', 'delete_username': 'examenPRG',
+                           'delete_confirmation': 'examenPRG'})
+
+    def test_recipe_order_checks_account_dependency(self):
+        base = {'hosts': ['192.168.1.2'], 'ssh_user': 'usuario', 'target_user': 'alumno', 'target_password': 'test-only'}
+        with self.assertRaisesRegex(ValueError, 'Coloca Crear usuario'):
+            aula.validate_run(base | {'recipes': ['vscode', 'user']})
+        result = aula.validate_run(base | {'recipes': ['java', 'user', 'vscode']})
+        self.assertEqual(result[1], ['java', 'user', 'vscode'])
+
+    def test_account_sudo_option_requires_boolean(self):
+        base = {'hosts': ['192.168.1.2'], 'recipes': ['user'], 'ssh_user': 'usuario',
+                'target_user': 'examenPRG', 'target_password': 'test-only'}
+        for value in [True, False]:
+            aula.validate_run(base | {'user_sudo': value})
+        for value in ['false', 0, None]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                aula.validate_run(base | {'user_sudo': value})
+
     def test_inventory_backups_and_no_credentials(self):
         with tempfile.TemporaryDirectory() as path, patch.object(aula, 'DATA', pathlib.Path(path)):
             aula.save_inventory(['192.168.1.2'], 2222)
@@ -40,6 +70,42 @@ class ValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 aula.discover(cidr, 22)
 
+class SelectedFileTests(unittest.TestCase):
+    def test_selected_files_accept_binary_and_reject_unsafe_destinations(self):
+        import base64
+        item = {'name': 'ejercicio.txt', 'content': base64.b64encode(b'contenido\x00').decode()}
+        body = {'hosts': ['192.168.1.2'], 'recipes': ['folders'], 'ssh_user': 'usuario',
+                'target_user': 'examenPRG', 'files': [item], 'destination_folder': 'Tema 1'}
+        aula.validate_run(body)
+        self.assertEqual(aula.validate_selected_files(body), [('ejercicio.txt', b'contenido\x00')])
+        for changes in [{'destination_folder': '../fuera'}, {'destination_folder': ' .. '}, {'destination_folder': ''},
+                        {'files': [item, item]}, {'files': [item | {'name': '../secreto'}]},
+                        {'files': [item | {'content': '%%%'}]}]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                aula.validate_run(body | changes)
+
+    def test_selected_files_are_snapshotted_and_removed_after_run(self):
+        import types
+        import ansible_runner
+        captured = {}
+        class ImmediateThread:
+            def __init__(self, target, **kwargs): self.target = target
+            def start(self): self.target()
+        def fake_run(**kwargs):
+            captured.update(kwargs)
+            files = kwargs['extravars']['aula_files']
+            self.assertEqual(pathlib.Path(files[0]).read_bytes(), b'hola')
+            self.assertEqual(kwargs['extravars']['aula_destination_folder'], 'Materiales')
+            return types.SimpleNamespace(rc=0)
+        body = {'hosts': ['192.168.1.2'], 'recipes': ['folders'], 'ssh_user': 'usuario',
+                'target_user': 'examenPRG', 'files': [{'name': 'hola.txt', 'content': 'aG9sYQ=='}],
+                'destination_folder': 'Materiales'}
+        with patch.object(aula.threading, 'Thread', ImmediateThread), patch.object(ansible_runner, 'run', fake_run):
+            result = aula.start_run(body)
+        self.assertEqual(aula.JOBS[result['id']]['status'], 'successful')
+        self.assertFalse(pathlib.Path(captured['extravars']['aula_files'][0]).exists())
+
+
 class RunnerTests(unittest.TestCase):
     def test_credentials_are_temporary_and_events_redacted(self):
         import types
@@ -52,6 +118,10 @@ class RunnerTests(unittest.TestCase):
                 self.target()
         def fake_run(**kwargs):
             captured.update(kwargs)
+            config = pathlib.Path(kwargs['envvars']['ANSIBLE_CONFIG'])
+            self.assertIn('host_key_checking = false', config.read_text())
+            self.assertEqual(kwargs['envvars']['ANSIBLE_HOST_KEY_CHECKING'], 'False')
+            self.assertIn('StrictHostKeyChecking=no', kwargs['extravars']['ansible_ssh_common_args'])
             self.assertTrue(pathlib.Path(kwargs['private_data_dir']).is_dir())
             self.assertEqual(pathlib.Path(kwargs['private_data_dir']).stat().st_mode & 0o777, 0o700)
             kwargs['event_handler']({'event': 'runner_on_failed', 'event_data': {

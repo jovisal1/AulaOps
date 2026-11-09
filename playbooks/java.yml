@@ -14,9 +14,46 @@
     tags:
     - always
   tasks:
+  - name: Actualizar índice de paquetes antes de comprobar Java
+    ansible.builtin.apt:
+      update_cache: true
+  - name: Consultar paquetes OpenJDK publicados en los repositorios
+    ansible.builtin.command:
+      argv:
+      - apt-cache
+      - search
+      - --names-only
+      - ^openjdk-[0-9]+-jdk$
+    register: jdk_packages
+    changed_when: false
+  - name: Consultar candidato de la versión OpenJDK seleccionada
+    ansible.builtin.command:
+      argv:
+      - apt-cache
+      - policy
+      - openjdk-{{ aula_jdk }}-jdk
+    environment:
+      LC_ALL: C
+    register: jdk_candidate
+    changed_when: false
+  - name: Elegir APT o descarga oficial de JDK 21
+    ansible.builtin.set_fact:
+      jdk_available_apt: '{{ jdk_candidate.stdout is search(''Candidate: (?!\(none\))\S+'')
+        }}'
+  - name: Comprobar que la versión seleccionada se puede instalar
+    ansible.builtin.assert:
+      that:
+      - jdk_available_apt or aula_jdk | string == '21'
+      fail_msg: 'OpenJDK {{ aula_jdk }} no está disponible para instalar en {{ inventory_hostname
+        }} tras actualizar APT. Paquetes publicados: {{ jdk_packages.stdout | default('''')
+        or ''ninguno'' }}. Cambia Versión OpenJDK en los parámetros de la receta por
+        una versión disponible. Si necesitas exactamente esta versión, revisa los
+        repositorios del equipo.'
   - name: Instalar JDK seleccionada
     ansible.builtin.apt:
       name: openjdk-{{ aula_jdk }}-jdk
       state: present
-      update_cache: true
-      cache_valid_time: 3600
+    when: jdk_available_apt
+  - name: Instalar Temurin JDK 21 cuando falta en APT
+    ansible.builtin.import_tasks: tasks/temurin21.yml
+    when: not jdk_available_apt and aula_jdk | string == '21'

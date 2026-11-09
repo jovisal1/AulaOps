@@ -3,6 +3,15 @@
   ansible.builtin.getent:
     database: passwd
     key: '{{ aula_user }}'
+    fail_key: false
+- name: Comprobar que existe el usuario del aula
+  ansible.builtin.assert:
+    that:
+    - ansible_facts.getent_passwd.get(aula_user) is not none
+    fail_msg: >-
+      El usuario del aula '{{ aula_user }}' no existe en {{ inventory_hostname }}.
+      Selecciona también 'Crear usuario del aula' e indica su contraseña,
+      o utiliza una cuenta existente. El nombre distingue mayúsculas y minúsculas.
 - name: Resolver home y grupo primario de destino
   ansible.builtin.set_fact:
     aula_home: '{{ ansible_facts.getent_passwd[aula_user][4] }}'

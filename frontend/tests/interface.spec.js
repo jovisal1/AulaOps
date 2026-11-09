@@ -10,6 +10,8 @@ async function setup(
     jobStatus = "successful",
     inventoryError = false,
     failedRecipe = false,
+    catalogue = [],
+    progress = undefined,
   } = {},
 ) {
   const calls = {
@@ -109,7 +111,7 @@ async function setup(
         });
       data = { exists: hosts.length > 0, hosts, port: 2222 };
     } else if (name === "/api/recipes") {
-      if (request.method() === "GET") data = { recipes: [] };
+      if (request.method() === "GET") data = { recipes: catalogue };
       else {
         calls.recipes.push(request.postDataJSON());
         if (failedRecipe)
@@ -128,6 +130,7 @@ async function setup(
       data = {
         id: "test-job",
         status: jobStatus,
+        progress,
         hosts: hosts.length ? hosts : ["192.168.1.2"],
         events: [
           {
@@ -159,10 +162,19 @@ async function setup(
 async function openRecipes(page) {
   await page.locator("#nav-recipes").click();
 }
+async function launchWithCredentials(page) {
+  await page.locator("#confirm").click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.locator("#launch_ssh_user").fill("profesor");
+  await page.locator("#launch_ssh_password").fill("fake-test-secret");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Ejecutar ahora" })
+    .click();
+}
 async function reviewCheck(page) {
   await openRecipes(page);
   await page.locator("#to_parameters").click();
-  await page.locator("#ssh_user").fill("profesor");
   await page.locator("#run").click();
 }
 
@@ -183,7 +195,7 @@ test("access follows host selection and a successfully started execution", async
   await reviewCheck(page);
   expect(calls.runs).toHaveLength(0);
   await expect(page.locator("#nav-execution")).toBeDisabled();
-  await page.locator("#confirm").click();
+  await launchWithCredentials(page);
   await expect(page.locator("#status")).toHaveText("Completada");
   expect(calls.runs).toHaveLength(1);
   await expect(page.locator("#nav-execution")).toBeEnabled();
@@ -208,22 +220,20 @@ test("saved inventory and wizard parameters persist going back without executing
   await expect(page.locator("#target_password")).toHaveCount(0);
   await expect(page.locator("#delete_username")).toHaveCount(0);
   await page.locator("#jdk").fill("25");
-  await page.locator("#ssh_user").fill("profesor");
-  await page.locator("#ssh_password").fill("fake-test-secret");
   await page.locator("#run").click();
   await expect(page.getByText("OpenJDK:", { exact: false })).toBeVisible();
   expect(calls.runs).toHaveLength(0);
   await page.locator("#back").click();
   await expect(page.locator("#jdk")).toHaveValue("25");
-  await expect(page.locator("#ssh_user")).toHaveValue("profesor");
+  await expect(page.locator("#ssh_user")).toHaveCount(0);
   await page.locator("#run").click();
-  await page.locator("#confirm").click();
+  await launchWithCredentials(page);
   await expect(page.locator("#status")).toHaveText("Completada");
   expect(calls.runs[0].port).toBe(2222);
   expect(calls.runs[0].jdk).toBe("25");
   await page.locator("#new_execution").click();
   await page.locator("#to_parameters").click();
-  await expect(page.locator("#ssh_password")).toHaveValue("");
+  await expect(page.locator("#ssh_password")).toHaveCount(0);
   expect(calls.errors).toEqual([]);
 });
 
@@ -273,14 +283,13 @@ test("deletion cannot mix setup recipes and requires the exact username", async 
   ).toBeVisible();
   await page.locator("#recipe-java").uncheck();
   await page.locator("#to_parameters").click();
-  await page.locator("#ssh_user").fill("profesor");
   await page.locator("#delete_username").fill("alumno");
   await page.locator("#run").click();
   await expect(page.locator("#confirm")).toBeDisabled();
   await page.locator("#delete_confirmation").fill("otro");
   await expect(page.locator("#confirm")).toBeDisabled();
   await page.locator("#delete_confirmation").fill("alumno");
-  await page.locator("#confirm").click();
+  await launchWithCredentials(page);
   await expect(page.locator("#status")).toHaveText("Completada");
   expect(calls.runs[0].delete_home).toBe(false);
   expect(calls.runs[0].delete_confirmation).toBe("alumno");
@@ -328,7 +337,7 @@ test("running job blocks a second execution and cancellation is explicit", async
     jobStatus: "running",
   });
   await reviewCheck(page);
-  await page.locator("#confirm").click();
+  await launchWithCredentials(page);
   await expect(page.locator("#status")).toHaveText("En curso");
   await expect(page.locator("#new_execution")).toBeDisabled();
   await page.locator("#cancel").click();
@@ -386,7 +395,7 @@ test("changing destinations after review returns to editable parameters", async 
   await page.locator("#ip-192\\.168\\.1\\.3").uncheck();
   await openRecipes(page);
   await expect(page.locator('[data-step="parameters"]')).toBeVisible();
-  await expect(page.locator("#ssh_user")).toHaveValue("profesor");
+  await expect(page.locator("#ssh_user")).toHaveCount(0);
   await expect(page.locator("#confirm")).toHaveCount(0);
 });
 
@@ -401,7 +410,7 @@ test("a rejected start keeps logs disabled and preserves the review", async ({
     }),
   );
   await reviewCheck(page);
-  await page.locator("#confirm").click();
+  await launchWithCredentials(page);
   await expect(
     page.getByText("Ya hay una ejecución activa. Espera o cancélala."),
   ).toBeVisible();
@@ -507,4 +516,186 @@ test("an outdated backend explains missing globals instead of showing an empty e
     ),
   ).toBeVisible();
   await expect(page.locator("#global_variables")).toHaveCount(0);
+});
+
+test("credentials popup defers execution and clears password on cancel", async ({
+  page,
+}) => {
+  const calls = await setup(page, { hosts: ["192.168.1.2"] });
+  await reviewCheck(page);
+  await page.locator("#confirm").click();
+  await page.locator("#launch_ssh_password").fill("discarded-secret");
+  expect(calls.runs).toHaveLength(0);
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Cancelar" })
+    .click();
+  await expect(page.locator("#launch_ssh_password")).toHaveCount(0);
+  await page.locator("#confirm").click();
+  await expect(page.locator("#launch_ssh_password")).toHaveValue("");
+  await page.locator("#launch_ssh_user").fill("ma.madridrodriguez");
+  await page.locator("#launch_ssh_password").fill("fake-test-secret");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Ejecutar ahora" })
+    .click();
+  await expect(page.locator("#status")).toHaveText("Completada");
+  expect(calls.runs[0].ssh_user).toBe("ma.madridrodriguez");
+  expect(calls.runs[0].ssh_password).toBe("fake-test-secret");
+  expect(calls.runs[0].sudo_password).toBe("fake-test-secret");
+});
+
+test("selected files and destination folder are sent when launching", async ({
+  page,
+}) => {
+  const calls = await setup(page, { hosts: ["192.168.1.2"] });
+  await openRecipes(page);
+  await page.locator("#recipe-folders").check();
+  await page.locator("#to_parameters").click();
+  await page.locator("#selected_files").setInputFiles([
+    {
+      name: "ejercicio.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("contenido"),
+    },
+    {
+      name: "quitar.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("descartado"),
+    },
+  ]);
+  await page
+    .getByRole("button", { name: "Quitar quitar.txt", exact: true })
+    .click();
+  await page.locator("#destination_folder").fill("Tema 1");
+  await page.locator("#run").click();
+  await expect(page.getByText("Tema 1", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Se eliminarán todas las carpetas existentes del escritorio y su contenido antes de copiar. Esta operación no tiene deshacer.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await launchWithCredentials(page);
+  await expect(page.locator("#status")).toHaveText("Completada");
+  expect(calls.runs[0].destination_folder).toBe("Tema 1");
+  expect(calls.runs[0].files).toEqual([
+    {
+      name: "ejercicio.txt",
+      content: Buffer.from("contenido").toString("base64"),
+    },
+  ]);
+});
+
+test("recipe arrows change the order sent to the server", async ({ page }) => {
+  const calls = await setup(page, { hosts: ["192.168.1.2"] });
+  await openRecipes(page);
+  await page.locator("#recipe-java").check();
+  await page.locator("#recipe-vscode").check();
+  await page
+    .getByRole("button", {
+      name: "Subir Instalación y configuración de VS Code",
+      exact: true,
+    })
+    .click();
+  expect(
+    await page
+      .getByTestId("recipe-order")
+      .locator("li")
+      .evaluateAll((items) => items.map((item) => item.dataset.recipeId)),
+  ).toEqual(["check", "vscode", "java"]);
+  await page.locator("#to_parameters").click();
+  await page.locator("#run").click();
+  await launchWithCredentials(page);
+  await expect(page.locator("#status")).toHaveText("Completada");
+  expect(calls.runs[0].recipes).toEqual(["check", "vscode", "java"]);
+});
+
+test("bundled catalogue shows imported recipes with only required parameters", async ({
+  page,
+}) => {
+  const catalogue = fs
+    .readdirSync(path.resolve("../recipes"))
+    .filter((name) => name.endsWith(".json"))
+    .map((name) =>
+      JSON.parse(fs.readFileSync(path.resolve("../recipes", name), "utf8")),
+    );
+  const mongo = catalogue.find(
+    (recipe) => recipe.source === "4_instalacion_mongo.yml",
+  );
+  const xampp = catalogue.find((recipe) => recipe.requires_account);
+  await setup(page, { hosts: ["192.168.1.2"], catalogue });
+  await openRecipes(page);
+  for (const recipe of catalogue)
+    await expect(page.locator("#recipe-" + recipe.id)).toBeVisible();
+  await page.locator("#recipe-" + mongo.id).check();
+  await page.locator("#to_parameters").click();
+  await expect(page.locator("#target_user")).toHaveCount(0);
+  await expect(page.locator("#jdk")).toHaveCount(0);
+  await expect(page.locator("#settings")).toHaveCount(0);
+  await page.locator("#to_selection").click();
+  await page.locator("#recipe-" + xampp.id).check();
+  await page.locator("#to_parameters").click();
+  await expect(page.locator("#target_user")).toBeVisible();
+  await expect(page.locator("#jdk")).toHaveCount(0);
+});
+
+test("account creation can disable sudo and sends the choice", async ({
+  page,
+}) => {
+  const calls = await setup(page, { hosts: ["192.168.1.2"] });
+  await openRecipes(page);
+  await page.locator("#recipe-user").check();
+  await page.locator("#to_parameters").click();
+  await expect(page.locator("#user_sudo")).toBeChecked();
+  await page.locator("#user_sudo").uncheck();
+  await page.locator("#target_user").fill("examenPRG");
+  await page.locator("#target_password").fill("example-account-test-only");
+  await page.locator("#run").click();
+  await launchWithCredentials(page);
+  await expect(page.locator("#status")).toHaveText("Completada");
+  expect(calls.runs[0].user_sudo).toBe(false);
+});
+
+test("running jobs show per-PC task counts, skipped tasks and current task", async ({
+  page,
+}) => {
+  const progress = {
+    "192.168.1.2": {
+      completed: 3,
+      total: 12,
+      estimated: true,
+      skipped: 1,
+      current_task: "Descargar Temurin",
+    },
+    "192.168.1.3": {
+      completed: 1,
+      total: 12,
+      estimated: true,
+      skipped: 0,
+      current_task: "Comprobar permisos",
+    },
+  };
+  await setup(page, {
+    hosts: ["192.168.1.2", "192.168.1.3"],
+    jobStatus: "running",
+    progress,
+  });
+  await reviewCheck(page);
+  await launchWithCredentials(page);
+  await expect(page.getByTestId("task-count-192.168.1.2")).toHaveText(
+    "3 / ≈12 tareas · 1 omitida",
+  );
+  await expect(page.getByTestId("task-count-192.168.1.3")).toHaveText(
+    "1 / ≈12 tareas",
+  );
+  await expect(
+    page.getByText("En curso: Descargar Temurin", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("progressbar", {
+      name: "Avance de tareas 192.168.1.2",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-valuenow", "25");
 });

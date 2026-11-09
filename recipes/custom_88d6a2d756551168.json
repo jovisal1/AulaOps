@@ -1,0 +1,115 @@
+{
+  "id": "custom_88d6a2d756551168",
+  "name": "Instalación de MongoDB y Compass",
+  "description": "MongoDB 8.0 y Compass 1.46.2. Requiere base Ubuntu focal/jammy/noble y arquitectura x86_64.",
+  "source": "4_instalacion_mongo.yml",
+  "content": "- name: Detectar base Ubuntu del equipo\n  ansible.builtin.shell: . /etc/os-release; printf \"%s\" \"${UBUNTU_CODENAME:-$VERSION_CODENAME}\"\n  register: aula_ubuntu_base\n  changed_when: false\n- name: Comprobar base Ubuntu compatible\n  ansible.builtin.assert:\n    that:\n    - aula_ubuntu_base.stdout in ['focal', 'jammy', 'noble']\n    fail_msg: Se necesita una base Ubuntu focal, jammy o noble identificable en /etc/os-release.\n- name: Comprobar arquitectura de Compass del paquete adjunto\n  ansible.builtin.assert:\n    that:\n    - ansible_facts.architecture == 'x86_64'\n    fail_msg: El paquete Compass de esta receta es amd64; se necesita un equipo x86_64.\n- name: Instalar dependencias\n  apt:\n    name:\n    - gnupg\n    - curl\n    - ca-certificates\n    state: present\n    update_cache: true\n- name: Descargar y agregar clave pública de MongoDB\n  ansible.builtin.get_url:\n    url: https://www.mongodb.org/static/pgp/server-8.0.asc\n    dest: /usr/share/keyrings/mongodb-server-8.0.asc\n    mode: '0644'\n- name: Convertir clave PGP a keyring\n  command: gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg /usr/share/keyrings/mongodb-server-8.0.asc\n  args:\n    creates: /usr/share/keyrings/mongodb-server-8.0.gpg\n- name: Añadir repositorio de MongoDB\n  ansible.builtin.apt_repository:\n    repo: deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg]\n      https://repo.mongodb.org/apt/ubuntu {{ aula_ubuntu_base.stdout }}/mongodb-org/8.0\n      multiverse\n    state: present\n    filename: mongodb-org-8.0\n- name: Instalar gnome-keyring\n  apt:\n    name: gnome-keyring\n    state: present\n- name: Instalar MongoDB\n  apt:\n    name: mongodb-org\n    state: present\n    update_cache: true\n- name: Descargar MongoDB Compass\n  get_url:\n    url: https://downloads.mongodb.com/compass/mongodb-compass_1.46.2_amd64.deb\n    dest: /tmp/mongodb-compass.deb\n    mode: '0644'\n- name: Instalar MongoDB Compass\n  apt:\n    deb: /tmp/mongodb-compass.deb\n- name: Eliminar paquete .deb descargado\n  file:\n    path: /tmp/mongodb-compass.deb\n    state: absent\n- name: Iniciar MongoDB y habilitarlo al arrancar\n  ansible.builtin.service:\n    name: mongod\n    state: started\n    enabled: true\n",
+  "tasks": [
+    {
+      "name": "Detectar base Ubuntu del equipo",
+      "ansible.builtin.shell": ". /etc/os-release; printf \"%s\" \"${UBUNTU_CODENAME:-$VERSION_CODENAME}\"",
+      "register": "aula_ubuntu_base",
+      "changed_when": false
+    },
+    {
+      "name": "Comprobar base Ubuntu compatible",
+      "ansible.builtin.assert": {
+        "that": [
+          "aula_ubuntu_base.stdout in ['focal', 'jammy', 'noble']"
+        ],
+        "fail_msg": "Se necesita una base Ubuntu focal, jammy o noble identificable en /etc/os-release."
+      }
+    },
+    {
+      "name": "Comprobar arquitectura de Compass del paquete adjunto",
+      "ansible.builtin.assert": {
+        "that": [
+          "ansible_facts.architecture == 'x86_64'"
+        ],
+        "fail_msg": "El paquete Compass de esta receta es amd64; se necesita un equipo x86_64."
+      }
+    },
+    {
+      "name": "Instalar dependencias",
+      "apt": {
+        "name": [
+          "gnupg",
+          "curl",
+          "ca-certificates"
+        ],
+        "state": "present",
+        "update_cache": true
+      }
+    },
+    {
+      "name": "Descargar y agregar clave pública de MongoDB",
+      "ansible.builtin.get_url": {
+        "url": "https://www.mongodb.org/static/pgp/server-8.0.asc",
+        "dest": "/usr/share/keyrings/mongodb-server-8.0.asc",
+        "mode": "0644"
+      }
+    },
+    {
+      "name": "Convertir clave PGP a keyring",
+      "command": "gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg /usr/share/keyrings/mongodb-server-8.0.asc",
+      "args": {
+        "creates": "/usr/share/keyrings/mongodb-server-8.0.gpg"
+      }
+    },
+    {
+      "name": "Añadir repositorio de MongoDB",
+      "ansible.builtin.apt_repository": {
+        "repo": "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu {{ aula_ubuntu_base.stdout }}/mongodb-org/8.0 multiverse",
+        "state": "present",
+        "filename": "mongodb-org-8.0"
+      }
+    },
+    {
+      "name": "Instalar gnome-keyring",
+      "apt": {
+        "name": "gnome-keyring",
+        "state": "present"
+      }
+    },
+    {
+      "name": "Instalar MongoDB",
+      "apt": {
+        "name": "mongodb-org",
+        "state": "present",
+        "update_cache": true
+      }
+    },
+    {
+      "name": "Descargar MongoDB Compass",
+      "get_url": {
+        "url": "https://downloads.mongodb.com/compass/mongodb-compass_1.46.2_amd64.deb",
+        "dest": "/tmp/mongodb-compass.deb",
+        "mode": "0644"
+      }
+    },
+    {
+      "name": "Instalar MongoDB Compass",
+      "apt": {
+        "deb": "/tmp/mongodb-compass.deb"
+      }
+    },
+    {
+      "name": "Eliminar paquete .deb descargado",
+      "file": {
+        "path": "/tmp/mongodb-compass.deb",
+        "state": "absent"
+      }
+    },
+    {
+      "name": "Iniciar MongoDB y habilitarlo al arrancar",
+      "ansible.builtin.service": {
+        "name": "mongod",
+        "state": "started",
+        "enabled": true
+      }
+    }
+  ],
+  "bundled": true,
+  "requires_account": false,
+  "shutdown": false
+}

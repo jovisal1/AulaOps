@@ -100,16 +100,26 @@ export default function ExecutionPanel() {
         </div>
         {status === "running" && (
           <Progress
-            aria-label={t("Equipos con resultados", "Equips amb resultats")}
-            value={
-              groups.length
-                ? (groups.filter((g) => g.events.length).length /
-                    groups.length) *
-                  100
-                : 0
-            }
+            aria-label={t("Avance total de tareas", "Avanç total de tasques")}
+            value={(() => {
+              const total = groups.reduce(
+                (sum, group) => sum + (group.progress.total || 0),
+                0,
+              );
+              const completed = groups.reduce(
+                (sum, group) => sum + group.progress.completed,
+                0,
+              );
+              return total ? Math.min(100, (completed / total) * 100) : 0;
+            })()}
           />
         )}
+        <p className="text-xs text-muted-foreground">
+          {t(
+            "Cada IP muestra tareas procesadas / total previsto (≈). Incluye las omitidas; los bucles cuentan como una tarea. El total puede ajustarse si Ansible añade tareas dinámicas. No es una estimación de tiempo.",
+            "Cada IP mostra tasques processades / total previst (≈). Inclou les omeses; els bucles compten com una tasca. El total pot ajustar-se si Ansible afig tasques dinàmiques. No és una estimació de temps.",
+          )}
+        </p>
         {pollError && (
           <Alert variant="destructive">
             <CircleAlert className="size-4" />
